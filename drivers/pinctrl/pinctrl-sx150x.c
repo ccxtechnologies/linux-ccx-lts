@@ -917,8 +917,8 @@ static int sx150x_init_hw(struct sx150x_pinctrl *pctl)
 	if (err < 0)
 		return err;
 
-	/* Set all pins to work in normal mode */
-	return regmap_write(pctl->regmap, reg[pctl->data->model], 0);
+	/* pins are set into the appropriate mode in the bootloader */
+	return 0;
 }
 
 static int sx150x_regmap_reg_width(struct sx150x_pinctrl *pctl,
