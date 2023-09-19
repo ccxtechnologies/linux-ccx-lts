@@ -49,6 +49,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/panic_notifier.h>
 
 /* This will be the driver name the kernel reports */
 #define DRIVER_NAME "imx-i2c"
@@ -117,6 +118,8 @@
 #define I2CR_IEN_OPCODE_1	I2CR_IEN
 
 #define I2C_PM_TIMEOUT		10 /* ms */
+
+static bool atomic_panic = false;
 
 /*
  * sorted list of clock divider, register value pairs
@@ -1323,24 +1326,6 @@ fail0:
 	return (result < 0) ? result : num;
 }
 
-static int i2c_imx_xfer(struct i2c_adapter *adapter,
-			struct i2c_msg *msgs, int num)
-{
-	struct imx_i2c_struct *i2c_imx = i2c_get_adapdata(adapter);
-	int result;
-
-	result = pm_runtime_resume_and_get(i2c_imx->adapter.dev.parent);
-	if (result < 0)
-		return result;
-
-	result = i2c_imx_xfer_common(adapter, msgs, num, false);
-
-	pm_runtime_mark_last_busy(i2c_imx->adapter.dev.parent);
-	pm_runtime_put_autosuspend(i2c_imx->adapter.dev.parent);
-
-	return result;
-}
-
 static int i2c_imx_xfer_atomic(struct i2c_adapter *adapter,
 			       struct i2c_msg *msgs, int num)
 {
@@ -1354,6 +1339,28 @@ static int i2c_imx_xfer_atomic(struct i2c_adapter *adapter,
 	result = i2c_imx_xfer_common(adapter, msgs, num, true);
 
 	clk_disable(i2c_imx->clk);
+
+	return result;
+}
+
+static int i2c_imx_xfer(struct i2c_adapter *adapter,
+			struct i2c_msg *msgs, int num)
+{
+	struct imx_i2c_struct *i2c_imx = i2c_get_adapdata(adapter);
+	int result;
+
+	if (atomic_panic) {
+		return i2c_imx_xfer_atomic(adapter, msgs, num);
+	}
+
+	result = pm_runtime_resume_and_get(i2c_imx->adapter.dev.parent);
+	if (result < 0)
+		return result;
+
+	result = i2c_imx_xfer_common(adapter, msgs, num, false);
+
+	pm_runtime_mark_last_busy(i2c_imx->adapter.dev.parent);
+	pm_runtime_put_autosuspend(i2c_imx->adapter.dev.parent);
 
 	return result;
 }
@@ -1645,8 +1652,20 @@ static struct platform_driver i2c_imx_driver = {
 	.id_table = imx_i2c_devtype,
 };
 
+static int atomic_on_panic(struct notifier_block *nb, unsigned long e, void *p)
+{
+	atomic_panic = true;
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block i2c_adap_imx_panic_nb = {
+	.notifier_call = atomic_on_panic,
+	.priority = 10,
+};
+
 static int __init i2c_adap_imx_init(void)
 {
+	atomic_notifier_chain_register(&panic_notifier_list, &i2c_adap_imx_panic_nb);
 	return platform_driver_register(&i2c_imx_driver);
 }
 subsys_initcall(i2c_adap_imx_init);
