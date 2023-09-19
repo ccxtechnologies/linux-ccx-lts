@@ -150,7 +150,7 @@ static const struct fsl_dspi_devtype_data devtype_data[] = {
 	[LS1012A] = {
 		/* Has A-011218 DMA erratum */
 		.trans_mode		= DSPI_XSPI_MODE,
-		.max_clock_factor	= 8,
+		.max_clock_factor	= 4,
 		.fifo_size		= 16,
 	},
 	[LS1028A] = {
@@ -167,7 +167,7 @@ static const struct fsl_dspi_devtype_data devtype_data[] = {
 	[LS1046A] = {
 		/* Has A-011218 DMA erratum */
 		.trans_mode		= DSPI_XSPI_MODE,
-		.max_clock_factor	= 8,
+		.max_clock_factor	= 4,
 		.fifo_size		= 16,
 	},
 	[LS2080A] = {
