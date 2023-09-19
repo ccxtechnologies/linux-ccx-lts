@@ -1217,8 +1217,7 @@ static int sx150x_probe(struct i2c_client *client,
 
 		ret = devm_request_threaded_irq(dev, client->irq, NULL,
 						sx150x_irq_thread_fn,
-						IRQF_ONESHOT | IRQF_SHARED |
-						IRQF_TRIGGER_FALLING,
+						IRQF_ONESHOT | IRQF_SHARED,
 						pctl->irq_chip.name, pctl);
 		if (ret < 0)
 			return ret;
