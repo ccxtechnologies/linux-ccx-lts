@@ -549,13 +549,19 @@ static irqreturn_t sx150x_irq_thread_fn(int irq, void *dev_id)
 	if (err < 0)
 		return IRQ_NONE;
 
-	err = regmap_write(pctl->regmap, pctl->data->reg_irq_src, val);
-	if (err < 0)
-		return IRQ_NONE;
+	while (val) {
+		err = regmap_write(pctl->regmap, pctl->data->reg_irq_src, val);
+		if (err < 0)
+			return IRQ_NONE;
 
-	status = val;
-	for_each_set_bit(n, &status, pctl->data->ngpios)
-		handle_nested_irq(irq_find_mapping(pctl->gpio.irq.domain, n));
+		status = val;
+		for_each_set_bit(n, &status, pctl->data->ngpios)
+			handle_nested_irq(irq_find_mapping(pctl->gpio.irq.domain, n));
+
+		err = regmap_read(pctl->regmap, pctl->data->reg_irq_src, &val);
+		if (err < 0)
+			return IRQ_NONE;
+	}
 
 	return IRQ_HANDLED;
 }
