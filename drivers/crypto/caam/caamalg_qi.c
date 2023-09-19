@@ -24,7 +24,7 @@
 /*
  * crypto alg
  */
-#define CAAM_CRA_PRIORITY		2000
+#define CAAM_CRA_PRIORITY		298
 /* max key is sum of AES_MAX_KEY_SIZE, max split key size */
 #define CAAM_MAX_KEY_SIZE		(AES_MAX_KEY_SIZE + \
 					 SHA512_DIGEST_SIZE * 2)
