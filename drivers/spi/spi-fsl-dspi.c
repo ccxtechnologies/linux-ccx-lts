@@ -1354,7 +1354,7 @@ static int dspi_probe(struct platform_device *pdev)
 	if (ret)
 		goto out_clk_put;
 
-	dspi->irq = platform_get_irq(pdev, 0);
+	dspi->irq = platform_get_irq_optional(pdev, 0);
 	if (dspi->irq <= 0) {
 		dev_info(&pdev->dev,
 			 "can't get platform irq, using poll mode\n");
