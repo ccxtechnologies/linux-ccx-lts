@@ -176,6 +176,7 @@ struct ds1307 {
 #ifdef CONFIG_COMMON_CLK
 	struct clk_hw		clks[2];
 #endif
+	bool bootstatus;
 };
 
 struct chip_desc {
@@ -201,6 +202,65 @@ struct chip_desc {
 	 * Remember this behavior to stay backwards compatible.
 	 */
 	bool			charge_default;
+};
+
+static ssize_t fout_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct ds1307 *ds1307 = dev_get_drvdata(dev);
+	int tmp, ret;
+
+	if (ds1307->type != ds_1340) {
+		return scnprintf(buf, PAGE_SIZE, "sysfs fout is only supported on the ds1340\n");
+	}
+
+	ret = regmap_read(ds1307->regmap, DS1340_REG_CONTROL, &tmp);
+
+	if (ret)
+		return scnprintf(buf, PAGE_SIZE, "Read REG Control Failed\n");
+
+	if (tmp & DS1340_BIT_OUT)
+		return scnprintf(buf, PAGE_SIZE, "1\n");
+
+	return scnprintf(buf, PAGE_SIZE, "0\n");
+}
+
+static ssize_t fout_store(struct device *dev,
+				struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct ds1307 *ds1307 = dev_get_drvdata(dev);
+	int ret, val;
+
+	if (ds1307->type != ds_1340) {
+		dev_err(dev,"sysfs fout is only supported on the ds1340\n");
+		return -1;
+	}
+
+	if (sscanf(buf, "%d", &val) != 1)
+		return -EINVAL;
+
+	if (val)
+		ret = regmap_update_bits(ds1307->regmap, DS1340_REG_CONTROL,
+				   DS1340_BIT_OUT, DS1340_BIT_OUT);
+	else
+		ret = regmap_update_bits(ds1307->regmap, DS1340_REG_CONTROL,
+				   DS1340_BIT_OUT, 0);
+
+	if (ret)
+		dev_err(dev, "Failed to set out to %d: %d\n", val, ret);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(fout);
+
+static struct attribute *ds1340_sysfs_entries[] = {
+	&dev_attr_fout.attr,
+	NULL
+};
+
+static struct attribute_group ds1340_attribute_group = {
+	.name = "configuration",
+	.attrs = ds1340_sysfs_entries,
 };
 
 static const struct chip_desc chips[last_ds_type];
@@ -1999,6 +2059,14 @@ static int ds1307_probe(struct i2c_client *client,
 	ds1307_hwmon_register(ds1307);
 	ds1307_clks_register(ds1307);
 	ds1307_wdt_register(ds1307);
+
+	if (ds1307->type == ds_1340) {
+		err = sysfs_create_group(&ds1307->dev->kobj, &ds1340_attribute_group);
+		if (err) {
+			dev_err(ds1307->dev, "failed to create ds1340 sysfs interface: %d\n", err);
+			return err;
+		}
+	}
 
 	return 0;
 
