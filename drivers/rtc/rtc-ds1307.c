@@ -6,6 +6,7 @@
  *  Copyright (C) 2006 David Brownell
  *  Copyright (C) 2009 Matthias Fuchs (rx8025 support)
  *  Copyright (C) 2012 Bertrand Achard (nvram access fixes)
+ *  Copyright (C) 2022 CCX Technologies (fout panic mark)
  */
 
 #include <linux/bcd.h>
@@ -23,6 +24,7 @@
 #include <linux/clk-provider.h>
 #include <linux/regmap.h>
 #include <linux/watchdog.h>
+#include <linux/panic_notifier.h>
 
 /*
  * We can't determine type by probing, but if we expect pre-Linux code
@@ -253,14 +255,42 @@ static ssize_t fout_store(struct device *dev,
 
 static DEVICE_ATTR_RW(fout);
 
+static ssize_t bootstatus_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct ds1307 *ds1307 = dev_get_drvdata(dev);
+	int tmp, ret;
+
+	if (ds1307->bootstatus)
+		return scnprintf(buf, PAGE_SIZE, "1\n");
+
+	return scnprintf(buf, PAGE_SIZE, "0\n");
+}
+static DEVICE_ATTR_RO(bootstatus);
+
 static struct attribute *ds1340_sysfs_entries[] = {
 	&dev_attr_fout.attr,
+	&dev_attr_bootstatus.attr,
 	NULL
 };
 
 static struct attribute_group ds1340_attribute_group = {
 	.name = "configuration",
 	.attrs = ds1340_sysfs_entries,
+};
+
+static struct ds1307 *panic_device = NULL;
+
+static int fout_on_panic(struct notifier_block *nb, unsigned long e, void *p)
+{
+	if (panic_device != NULL) {
+		regmap_write(panic_device->regmap, DS1340_REG_CONTROL, DS1340_BIT_OUT);
+	}
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block ds1340_panic_nb = {
+			.notifier_call = fout_on_panic,
 };
 
 static const struct chip_desc chips[last_ds_type];
@@ -2061,10 +2091,34 @@ static int ds1307_probe(struct i2c_client *client,
 	ds1307_wdt_register(ds1307);
 
 	if (ds1307->type == ds_1340) {
+		err = regmap_read(ds1307->regmap, DS1340_REG_CONTROL, &tmp);
+		if (err) {
+			dev_err(ds1307->dev, "Read REG Control Failed: %d\n", err);
+			return err;
+		}
+
+		if (tmp & DS1340_BIT_OUT)
+			ds1307->bootstatus = 1;
+		else
+			ds1307->bootstatus = 0;
+
+		err = regmap_update_bits(ds1307->regmap, DS1340_REG_CONTROL,
+				   DS1340_BIT_OUT, 0);
+		if (err) {
+			dev_err(ds1307->dev, "Clear FOUT Failed: %d\n", err);
+			return err;
+		}
+
 		err = sysfs_create_group(&ds1307->dev->kobj, &ds1340_attribute_group);
 		if (err) {
 			dev_err(ds1307->dev, "failed to create ds1340 sysfs interface: %d\n", err);
 			return err;
+		}
+
+		if (panic_device == NULL) {
+			dev_err(ds1307->dev, "Adding panic device\n");
+			panic_device = ds1307;
+			atomic_notifier_chain_register(&panic_notifier_list, &ds1340_panic_nb);
 		}
 	}
 
