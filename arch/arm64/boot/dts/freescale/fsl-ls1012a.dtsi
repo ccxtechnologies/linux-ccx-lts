@@ -380,7 +380,7 @@
 			interrupts = <0 64 IRQ_TYPE_LEVEL_HIGH>;
 			clock-names = "dspi";
 			clocks = <&clockgen QORIQ_CLK_PLATFORM_PLL
-					    QORIQ_CLK_PLL_DIV(1)>;
+					    QORIQ_CLK_PLL_DIV(4)>;
 			spi-num-chipselects = <5>;
 			big-endian;
 			status = "disabled";
