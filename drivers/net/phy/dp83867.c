@@ -105,6 +105,7 @@
 #define DP83867_PHYCR_RX_FIFO_DEPTH_MASK	GENMASK(13, 12)
 #define DP83867_PHYCR_RESERVED_MASK		BIT(11)
 #define DP83867_PHYCR_FORCE_LINK_GOOD		BIT(10)
+#define DP83867_PHYCR_SGMII_ENABLE		BIT(11)
 
 /* RGMIIDCTL bits */
 #define DP83867_RGMII_TX_CLK_DELAY_MAX		0xf
@@ -826,6 +827,20 @@ static int dp83867_config_init(struct phy_device *phydev)
 			       dp83867->io_impedance);
 
 	if (phydev->interface == PHY_INTERFACE_MODE_SGMII) {
+		/* If the SGMII strap wasn't set set to SGMII */
+		val = phy_read(phydev, MII_DP83867_PHYCTRL);
+		if (val < 0) {
+			pr_err("Failed to read PHY Control Register\n");
+			return val;
+		}
+
+		val |= DP83867_PHYCR_SGMII_ENABLE;
+		ret = phy_write(phydev, MII_DP83867_PHYCTRL, val);
+		if (ret) {
+			pr_err("Failed to enable SGMII Mode.\n");
+			return ret;
+		}
+
 		/* For support SPEED_10 in SGMII mode
 		 * DP83867_10M_SGMII_RATE_ADAPT bit
 		 * has to be cleared by software. That
