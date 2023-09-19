@@ -106,7 +106,7 @@ void mmc_gpiod_request_cd_irq(struct mmc_host *host)
 			ctx->cd_gpio_isr = mmc_gpio_cd_irqt;
 		ret = devm_request_threaded_irq(host->parent, irq,
 			NULL, ctx->cd_gpio_isr,
-			IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
+			IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_SHARED,
 			ctx->cd_label, host);
 		if (ret < 0)
 			irq = ret;
@@ -174,7 +174,8 @@ int mmc_gpiod_request_cd(struct mmc_host *host, const char *con_id,
 	struct gpio_desc *desc;
 	int ret;
 
-	desc = devm_gpiod_get_index(host->parent, con_id, idx, GPIOD_IN);
+	desc = devm_gpiod_get_index(host->parent, con_id, idx,
+					GPIOD_IN | GPIOD_FLAGS_BIT_NONEXCLUSIVE);
 	if (IS_ERR(desc))
 		return PTR_ERR(desc);
 

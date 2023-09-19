@@ -520,7 +520,7 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 
 	if (child) {
 		bdata->gpiod = devm_fwnode_gpiod_get(dev, child,
-						     NULL, GPIOD_IN, desc);
+						     NULL, GPIOD_IN | GPIOD_FLAGS_BIT_NONEXCLUSIVE, desc);
 		if (IS_ERR(bdata->gpiod)) {
 			error = PTR_ERR(bdata->gpiod);
 			if (error == -ENOENT) {
