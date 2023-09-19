@@ -97,7 +97,7 @@ static int __clk_bulk_get(struct device *dev, int num_clks,
 				continue;
 
 			if (ret != -EPROBE_DEFER)
-				dev_err(dev, "Failed to get clk '%s': %d\n",
+				dev_warn(dev, "Could not find clk '%s': %d\n",
 					clks[i].id, ret);
 			goto err;
 		}
