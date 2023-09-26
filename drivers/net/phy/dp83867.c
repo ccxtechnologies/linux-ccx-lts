@@ -171,6 +171,107 @@ struct dp83867_private {
 	bool sgmii_ref_clk_en;
 };
 
+static ssize_t impedance_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct phy_device *phydev = to_phy_device(dev);
+	int val, impedance;
+
+	val = phy_read_mmd(phydev, DP83867_DEVADDR, DP83867_IO_MUX_CFG);
+	impedance = val & DP83867_IO_MUX_CFG_IO_IMPEDANCE_MASK;
+
+	return scnprintf(buf, PAGE_SIZE, "%dohms\n",
+			 (impedance+35));
+}
+
+static ssize_t impedance_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct phy_device *phydev = to_phy_device(dev);
+	int val, impedance;
+
+	if (sscanf(buf, "%dohms", &impedance) != 1)
+		return -EINVAL;
+
+	val = phy_read_mmd(phydev, DP83867_DEVADDR, DP83867_IO_MUX_CFG);
+	val &= ~(DP83867_IO_MUX_CFG_IO_IMPEDANCE_MASK);
+	val |= (impedance-35) & DP83867_IO_MUX_CFG_IO_IMPEDANCE_MASK;
+	phy_write_mmd(phydev, DP83867_DEVADDR, DP83867_IO_MUX_CFG, val);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(impedance);
+
+static ssize_t rgmii_delay_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct phy_device *phydev = to_phy_device(dev);
+	int val, txen, rxen, txdelay, rxdelay;
+
+	val = phy_read_mmd(phydev, DP83867_DEVADDR, DP83867_RGMIICTL);
+	txen = val & DP83867_RGMII_TX_CLK_DELAY_EN;
+	rxen = val & DP83867_RGMII_RX_CLK_DELAY_EN;
+
+	val = phy_read_mmd(phydev, DP83867_DEVADDR, DP83867_RGMIIDCTL);
+	txdelay = (val >> DP83867_RGMII_TX_CLK_DELAY_SHIFT) & DP83867_RGMII_TX_CLK_DELAY_MAX;
+	rxdelay = (val >> DP83867_RGMII_RX_CLK_DELAY_SHIFT) & DP83867_RGMII_RX_CLK_DELAY_MAX;
+
+	return scnprintf(buf, PAGE_SIZE, "tx: %s -- %dps, rx: %s -- %dps\n",
+			 txen ? "enabled" : "disabled",
+			 (txdelay+1)*250,
+			 rxen ? "enabled" : "disabled",
+			 (rxdelay+1)*250);
+}
+
+static ssize_t rgmii_delay_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct phy_device *phydev = to_phy_device(dev);
+	char txen_str[12], rxen_str[12];
+	int val, txen, rxen, txdelay, rxdelay, delay;
+
+	if (sscanf(buf, "tx: %12s -- %dps, rx: %12s -- %dps",
+		   txen_str, &txdelay, rxen_str, &rxdelay) != 4)
+		return -EINVAL;
+
+	if (txen_str[0] == 'e')
+		txen = DP83867_RGMII_TX_CLK_DELAY_EN;
+	else
+		txen = 0;
+
+	if (rxen_str[0] == 'e')
+		rxen = DP83867_RGMII_RX_CLK_DELAY_EN;
+	else
+		rxen = 0;
+
+	val = phy_read_mmd(phydev, DP83867_DEVADDR, DP83867_RGMIICTL);
+	val &= ~(DP83867_RGMII_TX_CLK_DELAY_EN | DP83867_RGMII_RX_CLK_DELAY_EN);
+	val |= (txen | rxen);
+	phy_write_mmd(phydev, DP83867_DEVADDR, DP83867_RGMIICTL, val);
+
+	delay = ((((rxdelay/250)&DP83867_RGMII_RX_CLK_DELAY_MAX) << DP83867_RGMII_RX_CLK_DELAY_SHIFT) |
+		 (((txdelay/250)&DP83867_RGMII_TX_CLK_DELAY_MAX) << DP83867_RGMII_TX_CLK_DELAY_SHIFT));
+	phy_write_mmd(phydev, DP83867_DEVADDR, DP83867_RGMIIDCTL, delay);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(rgmii_delay);
+
+static struct attribute *dp83867_sysfs_entries[] = {
+	&dev_attr_rgmii_delay.attr,
+	&dev_attr_impedance.attr,
+	NULL
+};
+
+static struct attribute_group dp83867_attribute_group = {
+	.name = "configuration",
+	.attrs = dp83867_sysfs_entries,
+};
+
 static int dp83867_ack_interrupt(struct phy_device *phydev)
 {
 	int err = phy_read(phydev, MII_DP83867_ISR);
@@ -660,6 +761,14 @@ static int dp83867_of_init(struct phy_device *phydev)
 		return -EINVAL;
 	}
 
+	ret = sysfs_create_group(&phydev->mdio.dev.kobj, &dp83867_attribute_group);
+	if (ret) {
+		phydev_err(phydev, "failed to create delay sysfs interface\n");
+		return ret;
+	}
+
+	phydev_info(phydev, "Initialized PHY");
+
 	return 0;
 }
 #else
@@ -694,6 +803,18 @@ static int dp83867_of_init(struct phy_device *phydev)
 	return 0;
 }
 #endif /* CONFIG_OF_MDIO */
+
+static void dp83867_remove(struct phy_device *phydev)
+{
+	struct dp83867_private *dp83867 = phydev->priv;
+	struct device *dev = &phydev->mdio.dev;
+
+	if (phydev->interface == PHY_INTERFACE_MODE_RGMII_ID) {
+		device_remove_file(dev, &dev_attr_rgmii_delay);
+	}
+
+	kfree(dp83867);
+}
 
 static int dp83867_probe(struct phy_device *phydev)
 {
@@ -983,6 +1104,7 @@ static struct phy_driver dp83867_driver[] = {
 		/* PHY_GBIT_FEATURES */
 
 		.probe          = dp83867_probe,
+		.remove         = dp83867_remove,
 		.config_init	= dp83867_config_init,
 		.soft_reset	= dp83867_phy_reset,
 
