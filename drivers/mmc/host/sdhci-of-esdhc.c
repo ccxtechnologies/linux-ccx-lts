@@ -1479,6 +1479,9 @@ static int sdhci_esdhc_probe(struct platform_device *pdev)
 	if (of_device_is_compatible(np, "fsl,ls1021a-esdhc"))
 		host->quirks |= SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
 
+	if (of_device_is_compatible(np, "fsl,ls1012a-esdhc"))
+		host->quirks |= SDHCI_QUIRK_32BIT_ADMA_SIZE;
+
 	esdhc->quirk_ignore_data_inhibit = false;
 	if (of_device_is_compatible(np, "fsl,p2020-esdhc")) {
 		/*
