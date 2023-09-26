@@ -88,6 +88,7 @@ struct sdhci_esdhc {
 	unsigned int peripheral_clock;
 	const struct esdhc_clk_fixup *clk_fixup;
 	u32 div_ratio;
+	u32 sdclkctl;
 };
 
 /**
@@ -654,6 +655,10 @@ static void esdhc_of_set_clock(struct sdhci_host *host, unsigned int clock)
 		return;
 	}
 
+	if (esdhc->sdclkctl) {
+		sdhci_writel(host, esdhc->sdclkctl, ESDHC_SDCLKCTL);
+	}
+
 	/* Start pre_div at 2 for vendor version < 2.3. */
 	if (esdhc->vendor_ver < VENDOR_V_23)
 		pre_div = 2;
@@ -856,6 +861,48 @@ static void esdhc_reset(struct sdhci_host *host, u8 mask)
 		}
 	}
 }
+
+
+static ssize_t esdhc_sdclkctl_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct sdhci_host *host = dev_get_drvdata(dev);
+	u32 val;
+
+	val = sdhci_readl(host, ESDHC_SDCLKCTL);
+	return scnprintf(buf, PAGE_SIZE, "0x%x\n", val);
+}
+
+static ssize_t esdhc_sdclkctl_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct sdhci_host *host = dev_get_drvdata(dev);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
+
+	u32 val, sdclkctl;
+
+	if (sscanf(buf, "0x%x", &sdclkctl) != 1)
+		return -EINVAL;
+
+	esdhc->sdclkctl = sdclkctl;
+	sdhci_writel(host, esdhc->sdclkctl, ESDHC_SDCLKCTL);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(esdhc_sdclkctl);
+
+static struct attribute *esdhc_sysfs_entries[] = {
+	&dev_attr_esdhc_sdclkctl.attr,
+	NULL
+};
+
+static struct attribute_group esdhc_attribute_group = {
+	.name = "tuning",
+	.attrs = esdhc_sysfs_entries,
+};
 
 /* The SCFG, Supplemental Configuration Unit, provides SoC specific
  * configuration and status registers for the device. There is a
@@ -1446,6 +1493,8 @@ static int sdhci_esdhc_probe(struct platform_device *pdev)
 
 	pltfm_host = sdhci_priv(host);
 	esdhc = sdhci_pltfm_priv(pltfm_host);
+	esdhc->sdclkctl = 0x40030000; /* add some delay to compensate for PCB */
+
 	if (soc_device_match(soc_tuning_erratum_type1))
 		esdhc->quirk_tuning_erratum_type1 = true;
 	else
@@ -1502,6 +1551,14 @@ static int sdhci_esdhc_probe(struct platform_device *pdev)
 	ret = sdhci_add_host(host);
 	if (ret)
 		goto err;
+
+	ret = sysfs_create_group(&pdev->dev.kobj, &esdhc_attribute_group);
+	if (ret) {
+		pr_err("esdhc: failed to create tuning sysfs group\n");
+		return ret;
+	}
+
+	pr_info("esdhc: initialized\n");
 
 	return 0;
  err:
