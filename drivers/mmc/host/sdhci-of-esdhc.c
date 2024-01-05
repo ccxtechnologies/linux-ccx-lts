@@ -909,7 +909,7 @@ static ssize_t esdhc_sdclkctl_store(struct device *dev,
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
 
-	u32 val, sdclkctl;
+	u32 sdclkctl;
 
 	if (sscanf(buf, "0x%x", &sdclkctl) != 1)
 		return -EINVAL;
