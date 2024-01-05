@@ -899,11 +899,6 @@ static int sx150x_init_misc(struct sx150x_pinctrl *pctl)
 
 static int sx150x_init_hw(struct sx150x_pinctrl *pctl)
 {
-	const u8 reg[] = {
-		[SX150X_789] = pctl->data->pri.x789.reg_polarity,
-		[SX150X_456] = pctl->data->pri.x456.reg_pld_mode,
-		[SX150X_123] = pctl->data->pri.x123.reg_pld_mode,
-	};
 	int err;
 
 	if (pctl->data->model == SX150X_789 &&

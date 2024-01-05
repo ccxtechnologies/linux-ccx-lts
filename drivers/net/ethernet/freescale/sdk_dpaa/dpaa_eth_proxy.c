@@ -214,7 +214,7 @@ int dpa_proxy_set_mac_address(struct proxy_device *proxy_dev,
 	mac_dev = proxy_dev->mac_dev;
 
 	_errno = mac_dev->change_addr(mac_dev->get_mac_handle(mac_dev),
-			net_dev->dev_addr);
+			(uint8_t *)net_dev->dev_addr);
 	if (_errno < 0)
 		return _errno;
 

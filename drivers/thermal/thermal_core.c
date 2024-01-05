@@ -313,12 +313,6 @@ static void handle_non_critical_trips(struct thermal_zone_device *tz, int trip)
 
 void thermal_zone_device_critical(struct thermal_zone_device *tz)
 {
-	/*
-	 * poweroff_delay_ms must be a carefully profiled positive value.
-	 * Its a must for forced_emergency_poweroff_work to be scheduled.
-	 */
-	int poweroff_delay_ms = CONFIG_THERMAL_EMERGENCY_POWEROFF_DELAY_MS;
-
 	dev_emerg(&tz->device, "%s: critical temperature reached\n", tz->type);
 }
 EXPORT_SYMBOL(thermal_zone_device_critical);

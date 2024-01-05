@@ -592,7 +592,7 @@ int dpa_set_mac_address(struct net_device *net_dev, void *addr)
 	mac_dev = priv->mac_dev;
 
 	_errno = mac_dev->change_addr(mac_dev->get_mac_handle(mac_dev),
-			net_dev->dev_addr);
+			(uint8_t *)net_dev->dev_addr);
 	if (_errno < 0) {
 		if (netif_msg_drv(priv))
 			netdev_err(net_dev,
