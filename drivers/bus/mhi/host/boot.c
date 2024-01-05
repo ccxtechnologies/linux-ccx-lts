@@ -471,6 +471,12 @@ void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 		goto fw_load_ready_state;
 	}
 
+	if (mhi_cntrl->node_id) {
+		dev_info(dev, "Setting MHI node-id to 0x%x\n", mhi_cntrl->node_id);
+		mhi_write_reg_field(mhi_cntrl, mhi_cntrl->bhi,
+						BHI_ERRDBG2, 0xff, mhi_cntrl->node_id);
+	}
+
 	write_lock_irq(&mhi_cntrl->pm_lock);
 	mhi_cntrl->dev_state = MHI_STATE_RESET;
 	write_unlock_irq(&mhi_cntrl->pm_lock);

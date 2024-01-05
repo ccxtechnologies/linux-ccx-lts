@@ -376,7 +376,8 @@ static void ath11k_pci_init_qmi_ce_config(struct ath11k_base *ab)
 
 	cfg->svc_to_ce_map = ab->hw_params.svc_to_ce_map;
 	cfg->svc_to_ce_map_len = ab->hw_params.svc_to_ce_map_len;
-	ab->qmi.service_ins_id = ab->hw_params.qmi_service_ins_id;
+	ab->qmi.service_ins_id = ab->node_id + ab->hw_params.qmi_service_ins_id;
+	ath11k_info(ab, "Set QMI service-id to 0x%x\n", ab->qmi.service_ins_id);
 
 	ath11k_ce_get_shadow_config(ab, &cfg->shadow_reg_v2,
 				    &cfg->shadow_reg_v2_len);
@@ -638,7 +639,6 @@ static void ath11k_pci_power_down(struct ath11k_base *ab)
 
 	ath11k_mhi_stop(ab_pci);
 	clear_bit(ATH11K_FLAG_DEVICE_INIT_DONE, &ab->dev_flags);
-	ath11k_pci_sw_reset(ab_pci->ab, false);
 }
 
 static int ath11k_pci_hif_suspend(struct ath11k_base *ab)

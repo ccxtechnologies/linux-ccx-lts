@@ -452,6 +452,8 @@ struct mhi_controller {
 	bool wake_set;
 	unsigned long irq_flags;
 	u32 mru;
+
+	u32 node_id;
 };
 
 /**

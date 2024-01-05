@@ -1174,6 +1174,7 @@ int ath11k_core_fetch_board_data_api_1(struct ath11k_base *ab,
 int ath11k_core_fetch_bdf(struct ath11k_base *ab, struct ath11k_board_data *bd)
 {
 	char boardname[BOARD_NAME_SIZE], fallback_boardname[BOARD_NAME_SIZE];
+    char filename[ATH11K_QMI_MAX_BDF_FILE_NAME_SIZE];
 	char *filename, filepath[100];
 	int ret;
 
@@ -1208,20 +1209,29 @@ int ath11k_core_fetch_bdf(struct ath11k_base *ab, struct ath11k_board_data *bd)
 		goto success;
 
 	ab->bd_api = 1;
-	ret = ath11k_core_fetch_board_data_api_1(ab, bd, ATH11K_DEFAULT_BOARD_FILE);
-	if (ret) {
-		ath11k_core_create_firmware_path(ab, filename,
-						 filepath, sizeof(filepath));
-		ath11k_err(ab, "failed to fetch board data for %s from %s\n",
-			   boardname, filepath);
-		if (memcmp(boardname, fallback_boardname, strlen(boardname)))
-			ath11k_err(ab, "failed to fetch board data for %s from %s\n",
-				   fallback_boardname, filepath);
 
-		ath11k_err(ab, "failed to fetch board.bin from %s\n",
-			   ab->hw_params.fw.dir);
-		return ret;
-	}
+	/* board-<bus>-<id>.bin */
+	snprintf(filename, sizeof(filename), "board-%s-%s.bin",
+					ath11k_bus_str(ab->hif.bus), dev_name(ab->dev));
+	ath11k_info(ab, "Looking for board file: %s\n", filename);
+	ret = ath11k_core_fetch_board_data_api_1(ab, bd, filename);
+    +if (ret) {
+        ath11k_info(ab, "Looking for board file: %s\n", ATH11K_DEFAULT_BOARD_FILE);
+        ret = ath11k_core_fetch_board_data_api_1(ab, bd, ATH11K_DEFAULT_BOARD_FILE);
+        if (ret) {
+            ath11k_core_create_firmware_path(ab, filename,
+                             filepath, sizeof(filepath));
+            ath11k_err(ab, "failed to fetch board data for %s from %s\n",
+                   boardname, filepath);
+            if (memcmp(boardname, fallback_boardname, strlen(boardname)))
+                ath11k_err(ab, "failed to fetch board data for %s from %s\n",
+                       fallback_boardname, filepath);
+
+            ath11k_err(ab, "failed to fetch board.bin from %s\n",
+                   ab->hw_params.fw.dir);
+            return ret;
+        }
+    }
 
 success:
 	ath11k_dbg(ab, ATH11K_DBG_BOOT, "using board api %d\n", ab->bd_api);

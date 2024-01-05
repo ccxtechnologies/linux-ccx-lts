@@ -112,6 +112,8 @@ static struct mhi_controller_config ath11k_mhi_config_qca6390 = {
 	.event_cfg = ath11k_mhi_events_qca6390,
 };
 
+static u32 mhi_node_qcn9074 = 0;
+
 static struct mhi_channel_config ath11k_mhi_channels_qcn9074[] = {
 	{
 		.num = 0,
@@ -430,6 +432,10 @@ int ath11k_mhi_register(struct ath11k_pci *ab_pci)
 	switch (ab->hw_rev) {
 	case ATH11K_HW_QCN9074_HW10:
 		ath11k_mhi_config = &ath11k_mhi_config_qcn9074;
+		mhi_ctrl->node_id = mhi_node_qcn9074;
+		ab->node_id = mhi_node_qcn9074;
+		ath11k_info(ab, "Set node-id to 0x%x\n", mhi_node_qcn9074);
+		mhi_node_qcn9074++;
 		break;
 	case ATH11K_HW_QCA6390_HW20:
 	case ATH11K_HW_WCN6855_HW20:

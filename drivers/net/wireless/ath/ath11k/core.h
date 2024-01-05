@@ -968,6 +968,8 @@ struct ath11k_base {
 		const struct ath11k_pci_ops *ops;
 	} pci;
 
+	u32 node_id;
+
 	/* must be last */
 	u8 drv_priv[] __aligned(sizeof(void *));
 };

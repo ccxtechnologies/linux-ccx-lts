@@ -955,6 +955,8 @@ static void mhi_pci_remove(struct pci_dev *pdev)
 
 	mhi_unregister_controller(mhi_cntrl);
 	pci_disable_pcie_error_reporting(pdev);
+
+	pci_free_irq_vectors(pdev);
 }
 
 static void mhi_pci_shutdown(struct pci_dev *pdev)
