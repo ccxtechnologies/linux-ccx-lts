@@ -458,7 +458,7 @@ __init int bman_init(void)
 			/* Migrate one "unshared" to "shared" */
 			pcfg = get_pcfg(&unshared_pcfgs);
 			if (!pcfg) {
-				pr_crit("No BMan portals available!\n");
+				pr_info("No BMan portals available!\n");
 				return 0;
 			}
 			cpumask_clear_cpu(pcfg->public_cfg.cpu, &unshared_cpus);

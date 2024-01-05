@@ -839,7 +839,7 @@ __init int qman_init(void)
 		if (list_empty(&shared_pcfgs)) {
 			pcfg = get_pcfg(&unshared_pcfgs);
 			if (!pcfg) {
-				pr_crit("No QMan portals available!\n");
+				pr_info("No QMan portals available!\n");
 				return 0;
 			}
 			cpumask_clear_cpu(pcfg->public_cfg.cpu, &unshared_cpus);
