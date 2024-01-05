@@ -1,0 +1,11 @@
+--- drivers/i3c/master/svc-i3c-master.c
++++ drivers/i3c/master/svc-i3c-master.c
+@@ -92,6 +92,8 @@
+ #define SVC_I3C_MINTCLR      0x094
+ #define SVC_I3C_MINTMASKED   0x098
+ #define SVC_I3C_MERRWARN     0x09C
++#define   SVC_I3C_MERRWARN_NACK BIT(2)
++#define   SVC_I3C_MERRWARN_TIMEOUT BIT(20)
+ #define SVC_I3C_MDMACTRL     0x0A0
+ #define SVC_I3C_MDATACTRL    0x0AC
+ #define   SVC_I3C_MDATACTRL_FLUSHTB BIT(0)
