@@ -26,7 +26,15 @@
 #include "remoteproc_elf_helpers.h"
 #include "remoteproc_internal.h"
 
-#define DSP_RPROC_CLK_MAX			5
+#define DSP_RPROC_CLK_MAX			(5 + 18)
+
+/*
+ * Module parameters
+ */
+static unsigned int no_mailboxes;
+module_param_named(no_mailboxes, no_mailboxes, int, 0644);
+MODULE_PARM_DESC(no_mailboxes,
+		 "There is no mailbox between cores, so ignore remote proc reply after start, default is 0 (off).");
 
 #define REMOTE_IS_READY				BIT(0)
 #define REMOTE_READY_WAIT_MAX_RETRIES		500
@@ -171,6 +179,9 @@ static const struct imx_rproc_att imx_dsp_rproc_att_imx8ulp[] = {
 	{ 0x0c000000, 0x80000000, 0x10000000, 0},
 	{ 0x30000000, 0x90000000, 0x10000000, 0},
 };
+
+/* Initialize the mailboxes between cores, if exists */
+static int (*imx_dsp_rproc_mbox_init)(struct imx_dsp_rproc *priv);
 
 /* Reset function for DSP on i.MX8MP */
 static int imx8mp_dsp_reset(struct imx_dsp_rproc *priv)
@@ -492,12 +503,12 @@ static void imx_dsp_rproc_rxdb_callback(struct mbox_client *cl, void *data)
 }
 
 /**
- * imx_dsp_rproc_mbox_init() - request mailbox channels
+ * imx_dsp_rproc_mbox_alloc() - request mailbox channels
  * @priv: private data pointer
  *
  * Request three mailbox channels (tx, rx, rxdb).
  */
-static int imx_dsp_rproc_mbox_init(struct imx_dsp_rproc *priv)
+static int imx_dsp_rproc_mbox_alloc(struct imx_dsp_rproc *priv)
 {
 	struct device *dev = priv->rproc->dev.parent;
 	struct mbox_client *cl;
@@ -558,6 +569,18 @@ err_out:
 		mbox_free_channel(priv->rxdb_ch);
 
 	return ret;
+}
+
+/*
+ * imx_dsp_rproc_mbox_no_alloc()
+ *
+ * Empty function for no mailbox between cores
+ *
+ * Always return 0
+ */
+static int imx_dsp_rproc_mbox_no_alloc(struct imx_dsp_rproc *priv)
+{
+	return 0;
 }
 
 static void imx_dsp_rproc_free_mbox(struct imx_dsp_rproc *priv)
@@ -922,6 +945,7 @@ static const struct rproc_ops imx_dsp_rproc_ops = {
 	.kick		= imx_dsp_rproc_kick,
 	.load		= imx_dsp_rproc_elf_load_segments,
 	.parse_fw	= imx_dsp_rproc_parse_fw,
+	.find_loaded_rsc_table = rproc_elf_find_loaded_rsc_table,
 	.sanity_check	= rproc_elf_sanity_check,
 	.get_boot_addr	= rproc_elf_get_boot_addr,
 };
@@ -1051,6 +1075,11 @@ static int imx_dsp_rproc_detect_mode(struct imx_dsp_rproc *priv)
 static const char *imx_dsp_clks_names[DSP_RPROC_CLK_MAX] = {
 	/* DSP clocks */
 	"core", "ocram", "debug", "ipg", "mu",
+
+	/* peripheral clocks */
+	"per_clk1", "per_clk2", "per_clk3", "per_clk4", "per_clk5", "per_clk6",
+	"per_clk7", "per_clk8", "per_clk9", "per_clk10", "per_clk11", "per_clk12",
+	"per_clk13", "per_clk14", "per_clk15", "per_clk16", "per_clk17", "per_clk18",
 };
 
 static int imx_dsp_rproc_clk_get(struct imx_dsp_rproc *priv)
@@ -1093,6 +1122,11 @@ static int imx_dsp_rproc_probe(struct platform_device *pdev)
 	priv = rproc->priv;
 	priv->rproc = rproc;
 	priv->dsp_dcfg = dsp_dcfg;
+
+	if (no_mailboxes)
+		imx_dsp_rproc_mbox_init = imx_dsp_rproc_mbox_no_alloc;
+	else
+		imx_dsp_rproc_mbox_init = imx_dsp_rproc_mbox_alloc;
 
 	dev_set_drvdata(dev, rproc);
 

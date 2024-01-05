@@ -345,6 +345,7 @@ err_disable_clks:
  */
 int stmmac_mdio_reset(struct mii_bus *bus)
 {
+	int ret = 0;
 #if IS_ENABLED(CONFIG_STMMAC_PLATFORM)
 	struct net_device *ndev = bus->priv;
 	struct stmmac_priv *priv = netdev_priv(ndev);
@@ -358,12 +359,16 @@ int stmmac_mdio_reset(struct mii_bus *bus)
 		reset_gpio = devm_gpiod_get_optional(priv->device,
 						     "snps,reset",
 						     GPIOD_OUT_LOW);
-		if (IS_ERR(reset_gpio))
-			return PTR_ERR(reset_gpio);
+		if (IS_ERR_OR_NULL(reset_gpio)) {
+			ret = PTR_ERR_OR_ZERO(reset_gpio);
+			goto mdio_gpio_reset_end;
+		}
 
 		device_property_read_u32_array(priv->device,
 					       "snps,reset-delays-us",
 					       delays, ARRAY_SIZE(delays));
+		priv->mdio_rst_after_resume = of_property_read_bool(priv->device->of_node,
+								    "mdio_rst_after_resume");
 
 		if (delays[0])
 			msleep(DIV_ROUND_UP(delays[0], 1000));
@@ -375,7 +380,11 @@ int stmmac_mdio_reset(struct mii_bus *bus)
 		gpiod_set_value_cansleep(reset_gpio, 0);
 		if (delays[2])
 			msleep(DIV_ROUND_UP(delays[2], 1000));
+
+		devm_gpiod_put(priv->device, reset_gpio);
 	}
+
+mdio_gpio_reset_end:
 #endif
 
 	/* This is a workaround for problems with the STE101P PHY.
@@ -386,13 +395,12 @@ int stmmac_mdio_reset(struct mii_bus *bus)
 	if (!priv->plat->has_gmac4)
 		writel(0, priv->ioaddr + mii_address);
 #endif
-	return 0;
+	return ret;
 }
 
 int stmmac_xpcs_setup(struct mii_bus *bus)
 {
 	struct net_device *ndev = bus->priv;
-	struct mdio_device *mdiodev;
 	struct stmmac_priv *priv;
 	struct dw_xpcs *xpcs;
 	int mode, addr;
@@ -402,15 +410,9 @@ int stmmac_xpcs_setup(struct mii_bus *bus)
 
 	/* Try to probe the XPCS by scanning all addresses. */
 	for (addr = 0; addr < PHY_MAX_ADDR; addr++) {
-		mdiodev = mdio_device_create(bus, addr);
-		if (IS_ERR(mdiodev))
+		xpcs = xpcs_create_mdiodev(bus, addr, mode);
+		if (IS_ERR(xpcs))
 			continue;
-
-		xpcs = xpcs_create(mdiodev, mode);
-		if (IS_ERR_OR_NULL(xpcs)) {
-			mdio_device_free(mdiodev);
-			continue;
-		}
 
 		priv->hw->xpcs = xpcs;
 		break;
@@ -566,10 +568,8 @@ int stmmac_mdio_unregister(struct net_device *ndev)
 	if (!priv->mii)
 		return 0;
 
-	if (priv->hw->xpcs) {
-		mdio_device_free(priv->hw->xpcs->mdiodev);
+	if (priv->hw->xpcs)
 		xpcs_destroy(priv->hw->xpcs);
-	}
 
 	mdiobus_unregister(priv->mii);
 	priv->mii->priv = NULL;

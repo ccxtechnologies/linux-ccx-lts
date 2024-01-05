@@ -7,6 +7,7 @@
 
 #include <linux/bits.h>
 #include <linux/clk-provider.h>
+#include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/slab.h>
@@ -14,6 +15,7 @@
 #include "../clk-fractional-divider.h"
 #include "clk.h"
 
+#define PCG_PR_MASK		BIT(31)
 #define PCG_PCS_SHIFT	24
 #define PCG_PCS_MASK	0x7
 #define PCG_CGC_SHIFT	30
@@ -37,6 +39,9 @@ static int pcc_gate_enable(struct clk_hw *hw)
 	if (ret)
 		return ret;
 
+	/* wait before release reset */
+	udelay(1);
+
 	spin_lock_irqsave(gate->lock, flags);
 	/*
 	 * release the sw reset for peripherals associated with
@@ -47,6 +52,9 @@ static int pcc_gate_enable(struct clk_hw *hw)
 	writel(val, gate->reg);
 
 	spin_unlock_irqrestore(gate->lock, flags);
+
+	/* wait sync reset done */
+	udelay(1);
 
 	return 0;
 }
@@ -79,6 +87,10 @@ static struct clk_hw *imx_ulp_clk_hw_composite(const char *name,
 	struct clk_mux *mux = NULL;
 	struct clk_hw *hw;
 	u32 val;
+
+	val = readl(reg);
+	if (!(val & PCG_PR_MASK))
+		return ERR_PTR(-ENODEV);
 
 	if (mux_present) {
 		mux = kzalloc(sizeof(*mux), GFP_KERNEL);

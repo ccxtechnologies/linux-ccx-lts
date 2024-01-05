@@ -20,6 +20,7 @@
 #include <linux/module.h>
 #include <linux/of_net.h>
 #include <linux/pci.h>
+#include <linux/phy/phy.h>
 #include <linux/of.h>
 #include <net/pkt_sched.h>
 #include <net/dsa.h>
@@ -1231,6 +1232,7 @@ static const u32 felix_phy_match_table[PHY_INTERFACE_MODE_MAX] = {
 	[PHY_INTERFACE_MODE_SGMII] = OCELOT_PORT_MODE_SGMII,
 	[PHY_INTERFACE_MODE_QSGMII] = OCELOT_PORT_MODE_QSGMII,
 	[PHY_INTERFACE_MODE_USXGMII] = OCELOT_PORT_MODE_USXGMII,
+	[PHY_INTERFACE_MODE_10G_QXGMII] = OCELOT_PORT_MODE_10G_QXGMII,
 	[PHY_INTERFACE_MODE_1000BASEX] = OCELOT_PORT_MODE_1000BASEX,
 	[PHY_INTERFACE_MODE_2500BASEX] = OCELOT_PORT_MODE_2500BASEX,
 };
@@ -1359,8 +1361,10 @@ static struct regmap *felix_request_port_regmap(struct felix *felix, int port)
 static int felix_init_structs(struct felix *felix, int num_phys_ports)
 {
 	struct ocelot *ocelot = &felix->ocelot;
+	struct dsa_switch *ds = felix->ds;
 	phy_interface_t *port_phy_modes;
 	struct regmap *target;
+	struct dsa_port *dp;
 	int port, i, err;
 
 	ocelot->num_phys_ports = num_phys_ports;
@@ -1439,10 +1443,23 @@ static int felix_init_structs(struct felix *felix, int num_phys_ports)
 		ocelot_port->ocelot = ocelot;
 		ocelot_port->target = target;
 		ocelot_port->index = port;
+		/* Enable cut-through forwarding on all traffic classes by
+		 * default, to be compatible with the upstream kernel.
+		 */
+		ocelot_port->cut_thru = GENMASK(7, 0);
 		ocelot->ports[port] = ocelot_port;
 	}
 
 	kfree(port_phy_modes);
+
+	dsa_switch_for_each_available_port(dp, ds) {
+		struct ocelot_port *ocelot_port = ocelot->ports[dp->index];
+
+		ocelot_port->serdes = devm_of_phy_optional_get(ocelot->dev,
+							       dp->dn, NULL);
+		if (IS_ERR(ocelot_port->serdes))
+			return PTR_ERR(ocelot_port->serdes);
+	}
 
 	if (felix->info->mdio_bus_alloc) {
 		err = felix->info->mdio_bus_alloc(ocelot);
@@ -1772,12 +1789,12 @@ static int felix_change_mtu(struct dsa_switch *ds, int port, int new_mtu)
 
 	ocelot_port_set_maxlen(ocelot, port, new_mtu);
 
-	mutex_lock(&ocelot->tas_lock);
+	mutex_lock(&ocelot->fwd_domain_lock);
 
 	if (ocelot_port->taprio && felix->info->tas_guard_bands_update)
 		felix->info->tas_guard_bands_update(ocelot, port);
 
-	mutex_unlock(&ocelot->tas_lock);
+	mutex_unlock(&ocelot->fwd_domain_lock);
 
 	return 0;
 }
