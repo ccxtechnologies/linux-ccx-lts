@@ -473,8 +473,13 @@ void mhi_fw_load_handler(struct mhi_controller *mhi_cntrl)
 
 	if (mhi_cntrl->node_id) {
 		dev_info(dev, "Setting MHI node-id to 0x%x\n", mhi_cntrl->node_id);
-		mhi_write_reg_field(mhi_cntrl, mhi_cntrl->bhi,
+		ret = mhi_write_reg_field(mhi_cntrl, mhi_cntrl->bhi,
 						BHI_ERRDBG2, 0xff, mhi_cntrl->node_id);
+        if (ret) {
+            dev_err(dev, "Unable to set MHI node\n");
+            release_firmware(firmware);
+            goto error_fw_load;
+        }
 	}
 
 	write_lock_irq(&mhi_cntrl->pm_lock);
