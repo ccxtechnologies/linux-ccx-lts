@@ -888,11 +888,6 @@ static int parse_config(struct mhi_controller *mhi_cntrl,
 	ret = parse_ch_cfg(mhi_cntrl, config);
 	if (ret)
 		return ret;
-	/*
-	 * IRQ marked IRQF_SHARED isn't recommended to use IRQ_NOAUTOEN,
-	 * so disable it explicitly.
-	 */
-	disable_irq(mhi_cntrl->irq[0]);
 
 	/* Parse MHI event configuration */
 	ret = parse_ev_cfg(mhi_cntrl, config);
@@ -1180,7 +1175,6 @@ int mhi_prepare_for_power_up(struct mhi_controller *mhi_cntrl)
 			}
 		}
 
-		disable_irq(mhi_cntrl->irq[mhi_event->irq]);
 	}
 
 	mutex_unlock(&mhi_cntrl->pm_mutex);
