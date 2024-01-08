@@ -34,11 +34,6 @@
 #include <linux/version.h>
 #include "usb-wwan.h"
 
-bool debug = false;
-
-module_param(debug, bool, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
-MODULE_PARM_DESC(debug,"enable/disable driver logging");
-
 /*
  * Generate DTR/RTS signals on the port using the SET_CONTROL_LINE_STATE request
  * in CDC ACM.
@@ -368,14 +363,14 @@ static void usb_wwan_outdat_callback(struct urb *urb)
 unsigned int usb_wwan_write_room(struct tty_struct *tty)
 #else
 int usb_wwan_write_room(struct tty_struct* tty)
-#endif 
+#endif
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct usb_wwan_port_private *portdata;
 	int i;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,14,0)
 	unsigned int data_len = 0;
-#else 
+#else
 	int data_len = 0;
 #endif
 	struct urb *this_urb;

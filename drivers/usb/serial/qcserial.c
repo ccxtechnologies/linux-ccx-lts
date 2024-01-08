@@ -17,11 +17,6 @@
 
 #include "usb-wwan.h"
 
-bool debug = false;
-
-module_param(debug, bool, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
-MODULE_PARM_DESC(debug,"enable/disable driver logging");
-
 #define DRIVER_AUTHOR "Qualcomm Inc"
 #define DRIVER_DESC "Qualcomm USB Serial driver"
 
@@ -691,7 +686,7 @@ static int qc_attach(struct usb_serial *serial)
 		data->use_send_setup = 1;
 
 	/* enable ZLP */
-	data->use_zlp = 1;	
+	data->use_zlp = 1;
 
 	spin_lock_init(&data->susp_lock);
 
