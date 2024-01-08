@@ -1174,11 +1174,8 @@ int ath11k_core_fetch_board_data_api_1(struct ath11k_base *ab,
 int ath11k_core_fetch_bdf(struct ath11k_base *ab, struct ath11k_board_data *bd)
 {
 	char boardname[BOARD_NAME_SIZE], fallback_boardname[BOARD_NAME_SIZE];
-    char filename[ATH11K_QMI_MAX_BDF_FILE_NAME_SIZE];
-	char *filename, filepath[100];
+	char filename[ATH11K_QMI_MAX_BDF_FILE_NAME_SIZE], filepath[ATH11K_QMI_MAX_BDF_FILE_NAME_SIZE];
 	int ret;
-
-	filename = ATH11K_BOARD_API2_FILE;
 
 	ret = ath11k_core_create_board_name(ab, boardname, sizeof(boardname));
 	if (ret) {
@@ -1215,9 +1212,9 @@ int ath11k_core_fetch_bdf(struct ath11k_base *ab, struct ath11k_board_data *bd)
 					ath11k_bus_str(ab->hif.bus), dev_name(ab->dev));
 	ath11k_info(ab, "Looking for board file: %s\n", filename);
 	ret = ath11k_core_fetch_board_data_api_1(ab, bd, filename);
-    +if (ret) {
-        ath11k_info(ab, "Looking for board file: %s\n", ATH11K_DEFAULT_BOARD_FILE);
-        ret = ath11k_core_fetch_board_data_api_1(ab, bd, ATH11K_DEFAULT_BOARD_FILE);
+    if (ret) {
+        ath11k_info(ab, "Looking for board file: %s\n", ATH11K_BOARD_API2_FILE);
+        ret = ath11k_core_fetch_board_data_api_1(ab, bd, ATH11K_BOARD_API2_FILE);
         if (ret) {
             ath11k_core_create_firmware_path(ab, filename,
                              filepath, sizeof(filepath));
