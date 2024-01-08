@@ -3067,6 +3067,28 @@ static int __maybe_unused lpuart_runtime_resume(struct device *dev)
 	return lpuart_enable_clks(sport);
 };
 
+static bool lpuart_uport_is_active(struct lpuart_port *sport)
+{
+	struct tty_port *port = &sport->port.state->port;
+	struct tty_struct *tty;
+	struct device *tty_dev;
+	int may_wake = 0;
+
+	tty = tty_port_tty_get(port);
+	if (tty) {
+		tty_dev = tty->dev;
+		may_wake = tty_dev && device_may_wakeup(tty_dev);
+		tty_kref_put(tty);
+	}
+
+	if ((tty_port_initialized(port) && may_wake) ||
+	    (!console_suspend_enabled && uart_console(&sport->port)))
+		return true;
+
+	return false;
+}
+
+#ifdef CONFIG_PM_SLEEP
 static void serial_lpuart_enable_wakeup(struct lpuart_port *sport, bool on)
 {
 	unsigned int val, baud;
@@ -3097,28 +3119,6 @@ static void serial_lpuart_enable_wakeup(struct lpuart_port *sport, bool on)
 	}
 }
 
-static bool lpuart_uport_is_active(struct lpuart_port *sport)
-{
-	struct tty_port *port = &sport->port.state->port;
-	struct tty_struct *tty;
-	struct device *tty_dev;
-	int may_wake = 0;
-
-	tty = tty_port_tty_get(port);
-	if (tty) {
-		tty_dev = tty->dev;
-		may_wake = tty_dev && device_may_wakeup(tty_dev);
-		tty_kref_put(tty);
-	}
-
-	if ((tty_port_initialized(port) && may_wake) ||
-	    (!console_suspend_enabled && uart_console(&sport->port)))
-		return true;
-
-	return false;
-}
-
-#ifdef CONFIG_PM_SLEEP
 static int lpuart_suspend_noirq(struct device *dev)
 {
 	struct lpuart_port *sport = dev_get_drvdata(dev);

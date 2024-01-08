@@ -315,18 +315,6 @@ static int ls_pcie_pm_init(struct ls_pcie *pcie)
 	return 0;
 }
 
-static void ls_pcie_set_dstate(struct ls_pcie *pcie, u32 dstate)
-{
-	struct dw_pcie *pci = pcie->pci;
-	u8 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_PM);
-	u32 val;
-
-	val = dw_pcie_readw_dbi(pci, offset + PCI_PM_CTRL);
-	val &= ~PCI_PM_CTRL_STATE_MASK;
-	val |= dstate;
-	dw_pcie_writew_dbi(pci, offset + PCI_PM_CTRL, val);
-}
-
 static int ls_pcie_host_init(struct dw_pcie_rp *pp)
 {
 	struct dw_pcie *pci = to_dw_pcie_from_pp(pp);
@@ -445,6 +433,19 @@ static int ls_pcie_probe(struct platform_device *pdev)
 	return dw_pcie_host_init(&pci->pp);
 }
 
+#ifdef CONFIG_PM_SLEEP
+static void ls_pcie_set_dstate(struct ls_pcie *pcie, u32 dstate)
+{
+	struct dw_pcie *pci = pcie->pci;
+	u8 offset = dw_pcie_find_capability(pci, PCI_CAP_ID_PM);
+	u32 val;
+
+	val = dw_pcie_readw_dbi(pci, offset + PCI_PM_CTRL);
+	val &= ~PCI_PM_CTRL_STATE_MASK;
+	val |= dstate;
+	dw_pcie_writew_dbi(pci, offset + PCI_PM_CTRL, val);
+}
+
 static bool ls_pcie_pm_check(struct ls_pcie *pcie)
 {
 	if (!pcie->ep_presence) {
@@ -458,7 +459,6 @@ static bool ls_pcie_pm_check(struct ls_pcie *pcie)
 	return true;
 }
 
-#ifdef CONFIG_PM_SLEEP
 static int ls_pcie_suspend_noirq(struct device *dev)
 {
 	struct ls_pcie *pcie = dev_get_drvdata(dev);
