@@ -87,12 +87,6 @@ int atoi(const char *s);
 size_t strnlen(const char * s, size_t count);
 
 /**
- * strlen - Find the length of a string
- * @s: The string to be sized
- */
-size_t strlen(const char * s);
-
-/**
  * strtok - Split a string into tokens
  * @s: The string to be searched
  * @ct: The characters to search for
