@@ -59,7 +59,7 @@ static u8 nvme_max_retries = 5;
 module_param_named(max_retries, nvme_max_retries, byte, 0644);
 MODULE_PARM_DESC(max_retries, "max number of retries a command may have");
 
-static unsigned long default_ps_max_latency_us = 100000;
+static unsigned long default_ps_max_latency_us = 0;
 module_param(default_ps_max_latency_us, ulong, 0644);
 MODULE_PARM_DESC(default_ps_max_latency_us,
 		 "max power saving latency for new devices; use PM QOS to change per device");
@@ -1203,7 +1203,7 @@ EXPORT_SYMBOL_NS_GPL(nvme_execute_passthru_rq, NVME_TARGET_PASSTHRU);
 
 /*
  * Recommended frequency for KATO commands per NVMe 1.4 section 7.12.1:
- * 
+ *
  *   The host should send Keep Alive commands at half of the Keep Alive Timeout
  *   accounting for transport roundtrip times [..].
  */
@@ -2183,7 +2183,7 @@ static int nvme_send_ns_head_pr_command(struct block_device *bdev,
 	srcu_read_unlock(&head->srcu, srcu_idx);
 	return ret;
 }
-	
+
 static int nvme_send_ns_pr_command(struct nvme_ns *ns, struct nvme_command *c,
 		u8 data[16])
 {
