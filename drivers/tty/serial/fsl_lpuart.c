@@ -3118,6 +3118,7 @@ static bool lpuart_uport_is_active(struct lpuart_port *sport)
 	return false;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int lpuart_suspend_noirq(struct device *dev)
 {
 	struct lpuart_port *sport = dev_get_drvdata(dev);
@@ -3150,6 +3151,7 @@ static int lpuart_resume_noirq(struct device *dev)
 
 	return 0;
 }
+#endif
 
 static int __maybe_unused lpuart_suspend(struct device *dev)
 {

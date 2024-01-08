@@ -1496,6 +1496,7 @@ static int nxp_fspi_runtime_resume(struct device *dev)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int nxp_fspi_suspend(struct device *dev)
 {
 	int ret;
@@ -1523,6 +1524,7 @@ static int nxp_fspi_resume(struct device *dev)
 
 	return ret;
 }
+#endif
 
 
 static const struct dev_pm_ops nxp_fspi_pm_ops = {
