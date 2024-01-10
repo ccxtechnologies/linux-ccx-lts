@@ -639,6 +639,7 @@ static void ath11k_pci_power_down(struct ath11k_base *ab)
 
 	ath11k_mhi_stop(ab_pci);
 	clear_bit(ATH11K_FLAG_DEVICE_INIT_DONE, &ab->dev_flags);
+    ath11k_pci_sw_reset(ab_pci->ab, false);
 }
 
 static int ath11k_pci_hif_suspend(struct ath11k_base *ab)
