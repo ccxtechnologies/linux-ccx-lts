@@ -1213,10 +1213,10 @@ int ath11k_core_fetch_bdf(struct ath11k_base *ab, struct ath11k_board_data *bd)
 	ath11k_info(ab, "Looking for board file: %s\n", filename);
 	ret = ath11k_core_fetch_board_data_api_1(ab, bd, filename);
     if (ret) {
-        ath11k_info(ab, "Looking for board file: %s\n", ATH11K_BOARD_API2_FILE);
-        ret = ath11k_core_fetch_board_data_api_1(ab, bd, ATH11K_BOARD_API2_FILE);
+        ath11k_info(ab, "Looking for board file: %s\n", ATH11K_DEFAULT_BOARD_FILE);
+        ret = ath11k_core_fetch_board_data_api_1(ab, bd, ATH11K_DEFAULT_BOARD_FILE);
         if (ret) {
-            ath11k_core_create_firmware_path(ab, filename,
+            ath11k_core_create_firmware_path(ab, ATH11K_BOARD_API2_FILE,
                              filepath, sizeof(filepath));
             ath11k_err(ab, "failed to fetch board data for %s from %s\n",
                    boardname, filepath);
