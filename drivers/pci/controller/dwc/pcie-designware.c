@@ -658,7 +658,7 @@ int dw_pcie_wait_for_link(struct dw_pcie *pci)
 	}
 
 	if (retries >= LINK_WAIT_MAX_RETRIES) {
-		dev_err(pci->dev, "Phy link never came up\n");
+		dev_warning(pci->dev, "Phy link never came up\n");
 		return -ETIMEDOUT;
 	}
 
