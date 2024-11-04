@@ -1032,6 +1032,7 @@ int __hot dpa_tx(struct sk_buff *skb, struct net_device *net_dev)
 {
 	struct dpa_priv_s	*priv;
 	int queue_mapping = dpa_get_queue_mapping(skb);
+	int err;
 	struct qman_fq *egress_fq, *conf_fq;
 
 #ifdef CONFIG_FSL_DPAA_HOOKS
@@ -1054,6 +1055,12 @@ int __hot dpa_tx(struct sk_buff *skb, struct net_device *net_dev)
 
 	egress_fq = priv->egress_fqs[queue_mapping];
 	conf_fq = priv->conf_fqs[queue_mapping];
+
+	err = eth_skb_pad(skb);
+	if (err) {
+		netdev_err(net_dev, "Failed to pad Ethernet Frame: %d\n", err);
+		return err;
+	}
 
 	return dpa_tx_extended(skb, net_dev, egress_fq, conf_fq);
 }
