@@ -23,7 +23,7 @@
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0)
 #include <linux/sched/signal.h>
-#endif 
+#endif
 
 bool debug = false;
 
@@ -32,7 +32,7 @@ MODULE_PARM_DESC(debug,"enable/disable driver logging");
 
 #ifndef DEBUG
 
-#ifdef dev_dbg 
+#ifdef dev_dbg
 #undef dev_dbg
 #endif
 
@@ -170,7 +170,7 @@ static netdev_tx_t qmimux_start_xmit(struct sk_buff *skb, struct net_device *dev
 		stats64->tx_packets++;
 		stats64->tx_bytes += len;
 		u64_stats_update_end(&stats64->syncp);
-#endif		
+#endif
 	} else {
 		dev->stats.tx_dropped++;
 	}
@@ -185,7 +185,7 @@ void qmimux_get_stats64(struct net_device *net,
 #else
 struct rtnl_link_stats64* qmimux_get_stats64(struct net_device *net,
 			       struct rtnl_link_stats64 *stats)
-#endif				   
+#endif
 {
 	struct qmimux_priv *priv = netdev_priv(net);
 	unsigned int start;
@@ -216,7 +216,7 @@ struct rtnl_link_stats64* qmimux_get_stats64(struct net_device *net,
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0)
 	return stats;
-#endif	
+#endif
 }
 #endif
 
@@ -226,9 +226,9 @@ static const struct net_device_ops qmimux_netdev_ops = {
 	.ndo_start_xmit  = qmimux_start_xmit,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6,0,0)
 	.ndo_get_stats64 = dev_get_tstats64,
-#else	
+#else
 	.ndo_get_stats64 = qmimux_get_stats64,
-#endif	
+#endif
 };
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,11,9)
@@ -249,9 +249,9 @@ static void qmimux_setup(struct net_device *dev)
 	dev->mtu             = 1500;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,9)
 	dev->needs_free_netdev = true;
-#else 
+#else
 	dev->destructor      = qmimux_ndev_destructor;
-#endif	
+#endif
 }
 
 static struct net_device *qmimux_find_dev(struct usbnet *dev, u8 mux_id)
@@ -320,6 +320,7 @@ static int qmimux_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 			break;
 		default:
 			/* not ip - do not know what to do */
+			kfree_skb(skbn);
 			goto skip;
 		}
 
@@ -339,7 +340,7 @@ static int qmimux_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 			stats64->rx_packets++;
 			stats64->rx_bytes += pkt_len;
 			u64_stats_update_end(&stats64->syncp);
-#endif			
+#endif
 		}
 
 skip:
@@ -380,8 +381,8 @@ static int qmimux_register_device(struct net_device *real_dev, u8 mux_id)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,15,0)
 	err = netdev_upper_dev_link(real_dev, new_dev, NULL);
 #else
-	err = netdev_upper_dev_link(real_dev, new_dev); 
-#endif 
+	err = netdev_upper_dev_link(real_dev, new_dev);
+#endif
 
 	if (err)
 		goto out_unregister_netdev;
@@ -912,7 +913,7 @@ next_desc:
 		buf += h->bLength;
 	}
 
-#endif 
+#endif
 
 	/* Use separate control and data interfaces if we found a CDC Union */
 	if (cdc_union) {
@@ -992,7 +993,7 @@ next_desc:
 #else
 		dev->net->dev_addr[0] |= 0x02;	/* set local assignment bit */
 		dev->net->dev_addr[0] &= 0xbf;	/* clear "IP" bit */
-#endif		
+#endif
 	}
 	dev->net->netdev_ops = &qmi_wwan_netdev_ops;
 	dev->net->sysfs_groups[0] = &qmi_wwan_sysfs_attr_group;
@@ -1506,9 +1507,9 @@ static const struct usb_device_id products[] = {
 	{QMI_QUIRK_SET_DTR(0x1199, 0x907b, 10)},/* Sierra Wireless EM74xx */
 	{QMI_QUIRK_SET_DTR(0x1199, 0x9091, 8)},	/* Sierra Wireless EM7565 */
 	{QMI_QUIRK_SET_DTR(0x1199, 0x90d9, 0)},	/* Sierra Wireless EM9191 */
-	{QMI_QUIRK_SET_DTR(0x1199, 0x90d3, 8)},	/* Sierra Wireless EM919X RmNET */	
-	{QMI_QUIRK_SET_DTR(0x1199, 0x90e1, 8)},	/* Sierra Wireless EM929X RmNET */	
-	{QMI_QUIRK_SET_DTR(0x1199, 0x90e3, 8)},	/* Sierra Wireless EM929X RmNET */	
+	{QMI_QUIRK_SET_DTR(0x1199, 0x90d3, 8)},	/* Sierra Wireless EM919X RmNET */
+	{QMI_QUIRK_SET_DTR(0x1199, 0x90e1, 8)},	/* Sierra Wireless EM929X RmNET */
+	{QMI_QUIRK_SET_DTR(0x1199, 0x90e3, 8)},	/* Sierra Wireless EM929X RmNET */
 	{QMI_FIXED_INTF(0x1bbb, 0x011e, 4)},	/* Telekom Speedstick LTE II (Alcatel One Touch L100V LTE) */
 	{QMI_FIXED_INTF(0x1bbb, 0x0203, 2)},	/* Alcatel L800MA */
 	{QMI_FIXED_INTF(0x2357, 0x0201, 4)},	/* TP-LINK HSUPA Modem MA180 */
@@ -1516,6 +1517,12 @@ static const struct usb_device_id products[] = {
 	{QMI_QUIRK_SET_DTR(0x1bc7, 0x1031, 3)}, /* Telit LE910C1-EUX */
 	{QMI_QUIRK_SET_DTR(0x1bc7, 0x1040, 2)},	/* Telit LE922A */
 	{QMI_QUIRK_SET_DTR(0x1bc7, 0x1050, 2)},	/* Telit FN980 */
+ 	{QMI_QUIRK_SET_DTR(0x1bc7, 0x1060, 2)},	/* Telit LN920 */
+ 	{QMI_QUIRK_SET_DTR(0x1bc7, 0x1070, 2)},	/* Telit FN990 */
+ 	{QMI_QUIRK_SET_DTR(0x1bc7, 0x1080, 2)}, /* Telit FE990 */
+	{QMI_QUIRK_SET_DTR(0x1bc7, 0x10a0, 0)}, /* Telit FN920C04 */
+	{QMI_QUIRK_SET_DTR(0x1bc7, 0x10a4, 0)}, /* Telit FN920C04 */
+	{QMI_QUIRK_SET_DTR(0x1bc7, 0x10a9, 0)}, /* Telit FN920C04 */
 	{QMI_FIXED_INTF(0x1bc7, 0x1100, 3)},	/* Telit ME910 */
 	{QMI_FIXED_INTF(0x1bc7, 0x1101, 3)},	/* Telit ME910 dual modem */
 	{QMI_FIXED_INTF(0x1bc7, 0x1200, 5)},	/* Telit LE920 */
@@ -1523,6 +1530,8 @@ static const struct usb_device_id products[] = {
 	{QMI_QUIRK_SET_DTR(0x1bc7, 0x1260, 2)},	/* Telit LE910Cx */
 	{QMI_QUIRK_SET_DTR(0x1bc7, 0x1261, 2)},	/* Telit LE910Cx */
 	{QMI_QUIRK_SET_DTR(0x1bc7, 0x1900, 1)},	/* Telit LN940 series */
+	{QMI_QUIRK_SET_DTR(0x1bc7, 0x3000, 0)},	/* Telit FN912 series */
+	{QMI_QUIRK_SET_DTR(0x1bc7, 0x3001, 0)},	/* Telit FN912 series */
 	{QMI_FIXED_INTF(0x1c9e, 0x9801, 3)},	/* Telewell TW-3G HSPA+ */
 	{QMI_FIXED_INTF(0x1c9e, 0x9803, 4)},	/* Telewell TW-3G HSPA+ */
 	{QMI_FIXED_INTF(0x1c9e, 0x9b01, 3)},	/* XS Stick W100-2 from 4G Systems */
@@ -1564,6 +1573,10 @@ static const struct usb_device_id products[] = {
 	{QMI_QUIRK_SET_DTR(0x2cb7, 0x0104, 4)},	/* Fibocom NL678 series */
 	{QMI_FIXED_INTF(0x0489, 0xe0b4, 0)},	/* Foxconn T77W968 LTE */
 	{QMI_FIXED_INTF(0x0489, 0xe0b5, 0)},	/* Foxconn T77W968 LTE with eSIM support*/
+ 	{QMI_FIXED_INTF(0x2692, 0x9025, 4)},    /* Cellient MPL200 (rebranded Qualcomm 05c6:9025) */
+ 	{QMI_QUIRK_SET_DTR(0x1546, 0x1342, 4)},	/* u-blox LARA-L6 */
+	{QMI_QUIRK_SET_DTR(0x33f8, 0x0104, 4)}, /* Rolling RW101 RMNET */
+	{QMI_FIXED_INTF(0x2dee, 0x4d22, 5)},    /* MeiG Smart SRM825L */
 
 	/* 4. Gobi 1000 devices */
 	{QMI_GOBI1K_DEVICE(0x05c6, 0x9212)},	/* Acer Gobi Modem Device */
