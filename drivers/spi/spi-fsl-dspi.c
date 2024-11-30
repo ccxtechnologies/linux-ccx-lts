@@ -385,7 +385,7 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	int i;
 
 	for (i = 0; i < dspi->words_in_flight; i++)
-		dspi->dma->tx_dma_buf[i] = dspi_pop_tx_pushr(dspi);
+		dspi->dma->tx_dma_buf[i] = cpu_to_be32(dspi_pop_tx_pushr(dspi));
 
 	dma->tx_desc = dmaengine_prep_slave_single(dma->chan_tx,
 					dma->tx_dma_phys,
