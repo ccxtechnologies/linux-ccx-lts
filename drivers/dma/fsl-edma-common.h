@@ -172,6 +172,7 @@ struct fsl_edma_engine {
 	int			errirq;
 	bool			big_endian;
 	struct edma_regs	regs;
+	unsigned long chans_per_mux;
 	struct fsl_edma_chan	chans[];
 };
 

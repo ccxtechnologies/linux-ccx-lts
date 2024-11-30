@@ -110,7 +110,6 @@ static struct dma_chan *fsl_edma_xlate(struct of_phandle_args *dma_spec,
 	struct dma_chan *chan, *_chan;
 	struct fsl_edma_chan *fsl_chan;
 	u32 dmamux_nr = fsl_edma->drvdata->dmamuxs;
-	unsigned long chans_per_mux = fsl_edma->n_chans / dmamux_nr;
 
 	if (dma_spec->args_count != 2)
 		return NULL;
@@ -119,7 +118,7 @@ static struct dma_chan *fsl_edma_xlate(struct of_phandle_args *dma_spec,
 	list_for_each_entry_safe(chan, _chan, &fsl_edma->dma_dev.channels, device_node) {
 		if (chan->client_count)
 			continue;
-		if ((chan->chan_id / chans_per_mux) == dma_spec->args[0]) {
+		if ((chan->chan_id / fsl_edma->chans_per_mux) == dma_spec->args[0]) {
 			chan = dma_get_slave_channel(chan);
 			if (chan) {
 				chan->device->privatecnt++;
@@ -352,11 +351,24 @@ static int fsl_edma_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	if (drvdata->a011218) {
+		chans = chans - 2;
+		dev_warn(&pdev->dev,
+			"A-011218 workaround limits maximum"
+			" number of eDMA channels to %d.\n",
+			chans);
+	}
+
 	len = sizeof(*fsl_edma) + sizeof(*fsl_chan) * chans;
 	fsl_edma = devm_kzalloc(&pdev->dev, len, GFP_KERNEL);
 	if (!fsl_edma)
 		return -ENOMEM;
 
+	if (drvdata->a011218) {
+		fsl_edma->chans_per_mux = (chans+2) / dmamux_nr;
+	} else {
+		fsl_edma->chans_per_mux = chans / dmamux_nr;
+	}
 	fsl_edma->drvdata = drvdata;
 	fsl_edma->n_chans = chans;
 	mutex_init(&fsl_edma->fsl_edma_mutex);
