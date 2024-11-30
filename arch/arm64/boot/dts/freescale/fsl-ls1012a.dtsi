@@ -385,6 +385,9 @@
 					    QORIQ_CLK_PLL_DIV(4)>;
 			spi-num-chipselects = <5>;
 			big-endian;
+			dma-names = "tx", "rx";
+			dmas = <&edma0 0 62>,
+			       <&edma0 0 60>;
 			status = "disabled";
 		};
 
@@ -477,7 +480,7 @@
 
 		edma0: dma-controller@2c00000 {
 			#dma-cells = <2>;
-			compatible = "fsl,vf610-edma";
+			compatible = "fsl,ls1012a-edma";
 			reg = <0x0 0x2c00000 0x0 0x10000>,
 			      <0x0 0x2c10000 0x0 0x10000>,
 			      <0x0 0x2c20000 0x0 0x10000>;
