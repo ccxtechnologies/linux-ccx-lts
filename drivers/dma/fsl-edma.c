@@ -308,11 +308,20 @@ static struct fsl_edma_drvdata s32v234_data = {
 	.txirq_count = 2,
 };
 
+static struct fsl_edma_drvdata ls1012a_data = {
+	.version = v1,
+	.dmamuxs = DMAMUX_NR,
+	.setup_irq = fsl_edma_irq_init,
+	.txirq_count = 1,
+	.a011218 = true,
+};
+
 static const struct of_device_id fsl_edma_dt_ids[] = {
 	{ .compatible = "fsl,vf610-edma", .data = &vf610_data},
 	{ .compatible = "fsl,ls1028a-edma", .data = &ls1028a_data},
 	{ .compatible = "fsl,imx7ulp-edma", .data = &imx7ulp_data},
 	{ .compatible = "fsl,s32v234-edma", .data = &s32v234_data},
+	{ .compatible = "fsl,ls1012a-edma", .data = &ls1012a_data},
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, fsl_edma_dt_ids);

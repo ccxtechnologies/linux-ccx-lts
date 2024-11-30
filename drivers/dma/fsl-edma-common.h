@@ -156,6 +156,7 @@ struct fsl_edma_drvdata {
 	int			(*setup_irq)(struct platform_device *pdev,
 					     struct fsl_edma_engine *fsl_edma);
 	u8			txirq_count;
+	bool			a011218;
 };
 
 struct fsl_edma_engine {
