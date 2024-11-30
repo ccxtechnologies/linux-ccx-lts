@@ -148,9 +148,8 @@ static const struct fsl_dspi_devtype_data devtype_data[] = {
 		.fifo_size		= 4,
 	},
 	[LS1012A] = {
-		/* Has A-011218 DMA erratum */
-		.trans_mode		= DSPI_XSPI_MODE,
-		.max_clock_factor	= 4,
+		.trans_mode		= DSPI_DMA_MODE,
+		.max_clock_factor	= 16, /* TODO: reset to 4, slowing down because of scope probes */
 		.fifo_size		= 16,
 	},
 	[LS1028A] = {
