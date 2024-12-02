@@ -457,19 +457,18 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 			&regs->tcd[ch].dlast_sga);
 
 	if (fsl_chan->is_sw) {
-		tcd->csr |= le16_to_cpu(EDMA_TCD_CSR_START);
+		tcd->csr |= cpu_to_le16(EDMA_TCD_CSR_START);
 	}
 
 	edma_writew(edma, tcd->csr, &regs->tcd[ch].csr);
 
-	return;
 
 	if (fsl_chan->edma->drvdata->a011218 &&
 		((fsl_chan->slave_id == EDMA_A011218_RX_SLOT) ||
 		 (fsl_chan->slave_id == EDMA_A011218_TX_SLOT))) {
 
 		dev_info(&fsl_chan->vchan.chan.dev->device,
-				"==> Configuring linked chan TCD 0x%04x\n", elink_ch);
+				"==> Configuring linked chan TCD %d\n", elink_ch);
 
 		edma_writew(edma, 0,  &regs->tcd[elink_ch].csr);
 
@@ -478,7 +477,7 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 		edma_writel(edma, cpu_to_le32(a011218_dma + sizeof(u32)),
 				&regs->tcd[elink_ch].daddr);
 
-		edma_writew(edma, cpu_to_le32(0x0202), &regs->tcd[elink_ch].attr);
+		edma_writew(edma, cpu_to_le16(0x0202), &regs->tcd[elink_ch].attr);
 		edma_writew(edma, 0, &regs->tcd[elink_ch].soff);
 
 		edma_writel(edma, cpu_to_le32(sizeof(u32)), &regs->tcd[elink_ch].nbytes);
