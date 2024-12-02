@@ -192,6 +192,8 @@ static const struct fsl_dspi_devtype_data devtype_data[] = {
 };
 
 struct fsl_dspi_dma {
+	int					buffer_size;
+
 	u32					*tx_dma_buf;
 	struct dma_chan				*chan_tx;
 	dma_addr_t				tx_dma_phys;
@@ -442,6 +444,8 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 		return -ETIMEDOUT;
 	}
 
+	dev_info(dev, "==> tx time left: %d\n", time_left);
+
 	time_left = wait_for_completion_timeout(&dspi->dma->cmd_rx_complete,
 						DMA_COMPLETION_TIMEOUT);
 	if (time_left == 0) {
@@ -451,15 +455,19 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 		return -ETIMEDOUT;
 	}
 
+	dev_info(dev, "==> rx time left: %d\n", time_left);
+
 	return 0;
 }
 
 static void dspi_setup_accel(struct fsl_dspi *dspi);
+static void dspi_setup_no_accel(struct fsl_dspi *dspi);
 
 static int dspi_dma_xfer(struct fsl_dspi *dspi)
 {
 	struct spi_message *message = dspi->cur_msg;
 	struct device *dev = &dspi->pdev->dev;
+	struct fsl_dspi_dma *dma = dspi->dma;
 	int ret = 0;
 
 	/*
@@ -467,12 +475,11 @@ static int dspi_dma_xfer(struct fsl_dspi *dspi)
 	 * dspi_next_xfer_dma_submit
 	 */
 	while (dspi->len) {
-		/* Figure out operational bits-per-word for this chunk */
-		dspi_setup_accel(dspi);
+		dspi_setup_no_accel(dspi);
 
 		dspi->words_in_flight = dspi->len / dspi->oper_word_size;
-		if (dspi->words_in_flight > dspi->devtype_data->fifo_size)
-			dspi->words_in_flight = dspi->devtype_data->fifo_size;
+		if (dspi->words_in_flight > (dma->buffer_size / dspi->oper_word_size))
+			dspi->words_in_flight = dma->buffer_size / dspi->oper_word_size;
 
 		message->actual_length += dspi->words_in_flight *
 					  dspi->oper_word_size;
@@ -482,6 +489,10 @@ static int dspi_dma_xfer(struct fsl_dspi *dspi)
 			dev_err(dev, "DMA transfer failed\n");
 			break;
 		}
+
+		if (dspi->len)
+			dev_info(dev, "==> Multi stage transaction? %d\n", dspi->words_in_flight);
+
 	}
 
 	return ret;
@@ -489,7 +500,6 @@ static int dspi_dma_xfer(struct fsl_dspi *dspi)
 
 static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 {
-	int dma_bufsize = dspi->devtype_data->fifo_size * 2;
 	struct device *dev = &dspi->pdev->dev;
 	struct dma_slave_config cfg;
 	struct fsl_dspi_dma *dma;
@@ -498,6 +508,8 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	dma = devm_kzalloc(dev, sizeof(*dma), GFP_KERNEL);
 	if (!dma)
 		return -ENOMEM;
+
+	dma->buffer_size = 256;
 
 	dma->chan_rx = dma_request_chan(dev, "rx");
 	if (IS_ERR(dma->chan_rx)) {
@@ -514,7 +526,7 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	}
 
 	dma->tx_dma_buf = dma_alloc_coherent(dma->chan_tx->device->dev,
-					     dma_bufsize, &dma->tx_dma_phys,
+					     dma->buffer_size, &dma->tx_dma_phys,
 					     GFP_KERNEL);
 	if (!dma->tx_dma_buf) {
 		ret = -ENOMEM;
@@ -522,7 +534,7 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	}
 
 	dma->rx_dma_buf = dma_alloc_coherent(dma->chan_rx->device->dev,
-					     dma_bufsize, &dma->rx_dma_phys,
+					     dma->buffer_size, &dma->rx_dma_phys,
 					     GFP_KERNEL);
 	if (!dma->rx_dma_buf) {
 		ret = -ENOMEM;
@@ -561,10 +573,10 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 
 err_slave_config:
 	dma_free_coherent(dma->chan_rx->device->dev,
-			  dma_bufsize, dma->rx_dma_buf, dma->rx_dma_phys);
+			  dma->buffer_size, dma->rx_dma_buf, dma->rx_dma_phys);
 err_rx_dma_buf:
 	dma_free_coherent(dma->chan_tx->device->dev,
-			  dma_bufsize, dma->tx_dma_buf, dma->tx_dma_phys);
+			  dma->buffer_size, dma->tx_dma_buf, dma->tx_dma_phys);
 err_tx_dma_buf:
 	dma_release_channel(dma->chan_tx);
 err_tx_channel:
@@ -578,20 +590,19 @@ err_tx_channel:
 
 static void dspi_release_dma(struct fsl_dspi *dspi)
 {
-	int dma_bufsize = dspi->devtype_data->fifo_size * 2;
 	struct fsl_dspi_dma *dma = dspi->dma;
 
 	if (!dma)
 		return;
 
 	if (dma->chan_tx) {
-		dma_free_coherent(dma->chan_tx->device->dev, dma_bufsize,
+		dma_free_coherent(dma->chan_tx->device->dev, dma->buffer_size,
 				  dma->tx_dma_buf, dma->tx_dma_phys);
 		dma_release_channel(dma->chan_tx);
 	}
 
 	if (dma->chan_rx) {
-		dma_free_coherent(dma->chan_rx->device->dev, dma_bufsize,
+		dma_free_coherent(dma->chan_rx->device->dev, dma->buffer_size,
 				  dma->rx_dma_buf, dma->rx_dma_phys);
 		dma_release_channel(dma->chan_rx);
 	}
@@ -627,7 +638,8 @@ static void hz_to_spi_baud(char *pbr, char *br, int speed_hz,
 		}
 
 	if (minscale == INT_MAX) {
-		pr_warn("Can not find valid baud rate,speed_hz is %d,clkrate is %ld, we use the max prescaler value.\n",
+		pr_warn("Can not find valid baud rate,speed_hz is %d,clkrate is %ld,"
+				" we use the max prescaler value.\n",
 			speed_hz, clkrate);
 		*pbr = ARRAY_SIZE(pbr_tbl) - 1;
 		*br =  ARRAY_SIZE(brs) - 1;
@@ -661,7 +673,8 @@ static void ns_delay_scale(char *psc, char *sc, int delay_ns,
 		}
 
 	if (minscale == INT_MAX) {
-		pr_warn("Cannot find correct scale values for %dns delay at clkrate %ld, using max prescaler value",
+		pr_warn("Cannot find correct scale values for %dns delay at clkrate %ld,"
+				" using max prescaler value",
 			delay_ns, clkrate);
 		*psc = ARRAY_SIZE(pscale_tbl) - 1;
 		*sc = SPI_CTAR_SCALE_BITS;
@@ -799,6 +812,20 @@ no_accel:
 	 * We will update CTARE in the portion specific to XSPI, when we
 	 * also know the preload value (DTCP).
 	 */
+	regmap_write(dspi->regmap, SPI_CTAR(0),
+		     dspi->cur_chip->ctar_val |
+		     SPI_FRAME_BITS(dspi->oper_bits_per_word));
+}
+
+static void dspi_setup_no_accel(struct fsl_dspi *dspi)
+{
+	struct spi_transfer *xfer = dspi->cur_transfer;
+
+	dspi->dev_to_host = dspi_native_dev_to_host;
+	dspi->host_to_dev = dspi_native_host_to_dev;
+	dspi->oper_bits_per_word = xfer->bits_per_word;
+	dspi->oper_word_size = DIV_ROUND_UP(dspi->oper_bits_per_word, 8);
+
 	regmap_write(dspi->regmap, SPI_CTAR(0),
 		     dspi->cur_chip->ctar_val |
 		     SPI_FRAME_BITS(dspi->oper_bits_per_word));
