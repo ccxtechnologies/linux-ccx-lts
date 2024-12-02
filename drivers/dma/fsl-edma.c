@@ -109,7 +109,6 @@ static struct dma_chan *fsl_edma_xlate(struct of_phandle_args *dma_spec,
 	struct fsl_edma_engine *fsl_edma = ofdma->of_dma_data;
 	struct dma_chan *chan, *_chan;
 	struct fsl_edma_chan *fsl_chan;
-	u32 dmamux_nr = fsl_edma->drvdata->dmamuxs;
 
 	if (dma_spec->args_count != 2)
 		return NULL;
@@ -365,9 +364,9 @@ static int fsl_edma_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	if (drvdata->a011218) {
-		fsl_edma->chans_per_mux = (chans+2) / dmamux_nr;
+		fsl_edma->chans_per_mux = (chans+2) / drvdata->dmamuxs;
 	} else {
-		fsl_edma->chans_per_mux = chans / dmamux_nr;
+		fsl_edma->chans_per_mux = chans / drvdata->dmamuxs;
 	}
 	fsl_edma->drvdata = drvdata;
 	fsl_edma->n_chans = chans;
