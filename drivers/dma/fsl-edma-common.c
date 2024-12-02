@@ -54,16 +54,10 @@ static void fsl_edma_enable_request(struct fsl_edma_chan *fsl_chan)
 
 		if (fsl_chan->edma->drvdata->a011218) {
 			if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
-				dev_info(fsl_chan->edma->dma_dev.dev,
-						"==> Enabling RX Channel for %d\n", ch);
-
 				edma_writeb(fsl_chan->edma,
 					EDMA_SEEI_SEEI(EDMA_A011218_RX_CHAN), regs->seei);
 				edma_writeb(fsl_chan->edma, EDMA_A011218_RX_CHAN, regs->serq);
 			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
-				dev_info(fsl_chan->edma->dma_dev.dev,
-						"==> Enabling TX Channel for %d\n", ch);
-
 				edma_writeb(fsl_chan->edma,
 					EDMA_SEEI_SEEI(EDMA_A011218_TX_CHAN), regs->seei);
 				edma_writeb(fsl_chan->edma, EDMA_A011218_TX_CHAN, regs->serq);
@@ -92,16 +86,10 @@ void fsl_edma_disable_request(struct fsl_edma_chan *fsl_chan)
 
 		if (fsl_chan->edma->drvdata->a011218) {
 			if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
-				dev_info(fsl_chan->edma->dma_dev.dev,
-						"==> Disabling RX Channel for %d\n", ch);
-
 				edma_writeb(fsl_chan->edma, EDMA_A011218_RX_CHAN, regs->cerq);
 				edma_writeb(fsl_chan->edma,
 						EDMA_CEEI_CEEI(EDMA_A011218_RX_CHAN), regs->ceei);
 			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
-				dev_info(fsl_chan->edma->dma_dev.dev,
-						"==> Disabling TX Channel for %d\n", ch);
-
 				edma_writeb(fsl_chan->edma, EDMA_A011218_TX_CHAN, regs->cerq);
 				edma_writeb(fsl_chan->edma,
 						EDMA_CEEI_CEEI(EDMA_A011218_TX_CHAN), regs->ceei);
@@ -424,17 +412,9 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 		if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
 			ch = EDMA_A011218_RX_CHAN;
 			a011218_dma = fsl_chan->edma->a011218_dma_rx;
-
-			dev_info(&fsl_chan->vchan.chan.dev->device,
-					"==> Configuring linked RX channel %d for channel %d\n",
-					ch, elink_ch);
 		} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
 			ch = EDMA_A011218_TX_CHAN;
 			a011218_dma = fsl_chan->edma->a011218_dma_tx;
-
-			dev_info(&fsl_chan->vchan.chan.dev->device,
-					"==> Configuring linked TX channel %d for channel %d\n",
-					ch, elink_ch);
 		}
 	}
 
@@ -462,13 +442,9 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 
 	edma_writew(edma, tcd->csr, &regs->tcd[ch].csr);
 
-
 	if (fsl_chan->edma->drvdata->a011218 &&
 		((fsl_chan->slave_id == EDMA_A011218_RX_SLOT) ||
 		 (fsl_chan->slave_id == EDMA_A011218_TX_SLOT))) {
-
-		dev_info(&fsl_chan->vchan.chan.dev->device,
-				"==> Configuring linked chan TCD %d\n", elink_ch);
 
 		edma_writew(edma, 0,  &regs->tcd[elink_ch].csr);
 
