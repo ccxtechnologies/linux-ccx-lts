@@ -40,8 +40,6 @@ static irqreturn_t fsl_edma_tx_handler(int irq, void *dev_id)
 	if (!intr)
 		return IRQ_NONE;
 
-	dev_info(fsl_edma->dma_dev.dev, "==> Channel IRQ: 0x%04x <==\n", intr);
-
 	for (i = 0; i < fsl_edma->n_chans; i++) {
 		ch = i;
 		fsl_chan = &fsl_edma->chans[ch];
