@@ -44,6 +44,11 @@
 #define EDMA_TCD_CITER_CITER(x)		((x) & GENMASK(14, 0))
 #define EDMA_TCD_BITER_BITER(x)		((x) & GENMASK(14, 0))
 
+#define EDMA_TCD_CITER_ELINK	BIT(15)
+#define EDMA_TCD_CITER_LINK(x)	(((x) & GENMASK(6, 0)) << 9)
+#define EDMA_TCD_BITER_ELINK	BIT(15)
+#define EDMA_TCD_BITER_LINK(x)	(((x) & GENMASK(6, 0)) << 9)
+
 #define EDMA_TCD_CSR_START		BIT(0)
 #define EDMA_TCD_CSR_INT_MAJOR		BIT(1)
 #define EDMA_TCD_CSR_INT_HALF		BIT(2)
@@ -52,6 +57,7 @@
 #define EDMA_TCD_CSR_E_LINK		BIT(5)
 #define EDMA_TCD_CSR_ACTIVE		BIT(6)
 #define EDMA_TCD_CSR_DONE		BIT(7)
+#define EDMA_TCD_CSR_LINK(x)		(((x) & GENMASK(6, 0)) << 8)
 
 #define EDMAMUX_CHCFG_DIS		0x0
 #define EDMAMUX_CHCFG_ENBL		0x80
@@ -65,6 +71,13 @@
 				 BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) | \
 				 BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) | \
 				 BIT(DMA_SLAVE_BUSWIDTH_8_BYTES))
+
+#define EDMA_A011218_RX_CHAN	30
+#define EDMA_A011218_TX_CHAN	31
+
+#define EDMA_A011218_RX_SLOT	60
+#define EDMA_A011218_TX_SLOT	62
+
 enum fsl_edma_pm_state {
 	RUNNING = 0,
 	SUSPENDED,
@@ -173,6 +186,8 @@ struct fsl_edma_engine {
 	bool			big_endian;
 	struct edma_regs	regs;
 	unsigned long chans_per_mux;
+	dma_addr_t		a011218_dma_rx;
+	dma_addr_t		a011218_dma_tx;
 	struct fsl_edma_chan	chans[];
 };
 

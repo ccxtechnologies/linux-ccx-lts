@@ -336,6 +336,7 @@ static int fsl_edma_probe(struct platform_device *pdev)
 	struct resource *res;
 	int len, chans;
 	int ret, i;
+	u32 *a011218_dma;
 
 	if (of_id)
 		drvdata = of_id->data;
@@ -496,6 +497,32 @@ static int fsl_edma_probe(struct platform_device *pdev)
 		dma_async_device_unregister(&fsl_edma->dma_dev);
 		fsl_disable_clocks(fsl_edma, fsl_edma->drvdata->dmamuxs);
 		return ret;
+	}
+
+	if (drvdata->a011218) {
+		edma_writew(fsl_edma, 0x0, &regs->tcd[EDMA_A011218_RX_CHAN].csr);
+		edma_writew(fsl_edma, 0x0, &regs->tcd[EDMA_A011218_TX_CHAN].csr);
+
+		a011218_dma = dma_alloc_coherent(&pdev->dev,
+				sizeof(u32)*2,
+				&fsl_edma->a011218_dma_rx, GFP_KERNEL);
+		if (a011218_dma == NULL) {
+			dev_err(&fsl_chan->vchan.chan.dev->device,
+					"Failed to allocate extra DMA region"
+					" for A-011218 dummy rx interface\n");
+			return -ENOMEM;
+		}
+
+		a011218_dma = dma_alloc_coherent(&pdev->dev,
+				sizeof(u32)*2,
+				&fsl_edma->a011218_dma_tx, GFP_KERNEL);
+		if (a011218_dma == NULL) {
+			dev_err(&fsl_chan->vchan.chan.dev->device,
+					"Failed to allocate extra DMA region"
+					" for A-011218 dummy tx interface\n");
+			return -ENOMEM;
+		}
+
 	}
 
 	/* enable round robin arbitration */
