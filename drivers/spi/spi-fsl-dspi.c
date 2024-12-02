@@ -370,7 +370,7 @@ static void dspi_rx_dma_callback(void *arg)
 
 	if (dspi->rx) {
 		for (i = 0; i < dspi->words_in_flight; i++)
-			dspi_push_rx(dspi, dspi->dma->rx_dma_buf[i]);
+			dspi_push_rx(dspi, be32_to_cpu(dspi->dma->rx_dma_buf[i]));
 	}
 
 	complete(&dma->cmd_rx_complete);
