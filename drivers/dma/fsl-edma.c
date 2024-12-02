@@ -32,7 +32,7 @@ static void fsl_edma_synchronize(struct dma_chan *chan)
 static irqreturn_t fsl_edma_tx_handler(int irq, void *dev_id)
 {
 	struct fsl_edma_engine *fsl_edma = dev_id;
-	unsigned int intr, ch;
+	unsigned int intr, ch, i;
 	struct edma_regs *regs = &fsl_edma->regs;
 	struct fsl_edma_chan *fsl_chan;
 
@@ -40,11 +40,26 @@ static irqreturn_t fsl_edma_tx_handler(int irq, void *dev_id)
 	if (!intr)
 		return IRQ_NONE;
 
-	for (ch = 0; ch < fsl_edma->n_chans; ch++) {
+	dev_info(fsl_edma->dma_dev.dev, "==> Channel IRQ: 0x%04x <==\n", intr);
+
+	for (i = 0; i < fsl_edma->n_chans; i++) {
+		ch = i;
+		fsl_chan = &fsl_edma->chans[ch];
+
+		if (fsl_edma->drvdata->a011218) {
+			if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
+				if (intr & (0x1 << ch))
+					edma_writeb(fsl_edma, EDMA_CINT_CINT(ch), regs->cint);
+				ch = EDMA_A011218_RX_CHAN;
+			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
+				if (intr & (0x1 << ch))
+					edma_writeb(fsl_edma, EDMA_CINT_CINT(ch), regs->cint);
+				ch = EDMA_A011218_TX_CHAN;
+			}
+		}
+
 		if (intr & (0x1 << ch)) {
-
-			fsl_chan = &fsl_edma->chans[ch];
-
+			edma_writeb(fsl_edma, EDMA_CINT_CINT(ch), regs->cint);
 			spin_lock(&fsl_chan->vchan.lock);
 
 			if (!fsl_chan->edesc) {
@@ -71,8 +86,6 @@ static irqreturn_t fsl_edma_tx_handler(int irq, void *dev_id)
 		}
 	}
 
-	edma_writeb(fsl_edma, EDMA_CINT_CAIR, regs->cint);
-
 	return IRQ_HANDLED;
 }
 
@@ -86,15 +99,23 @@ static irqreturn_t fsl_edma_err_handler(int irq, void *dev_id)
 	if (!err)
 		return IRQ_NONE;
 
+	dev_info(fsl_edma->dma_dev.dev, "==> Channel ERR: 0x%04x <==\n", err);
+
 	for (ch = 0; ch < fsl_edma->n_chans; ch++) {
 		if (err & (0x1 << ch)) {
+			edma_writeb(fsl_edma, EDMA_CERR_CERR(ch), regs->cerr);
 			fsl_edma_disable_request(&fsl_edma->chans[ch]);
 			fsl_edma->chans[ch].status = DMA_ERROR;
 			fsl_edma->chans[ch].idle = true;
 		}
 	}
 
-	edma_writeb(fsl_edma, EDMA_CERR_CAEI, regs->cerr);
+	if (fsl_edma->drvdata->a011218) {
+		if (err & (0x1 << EDMA_A011218_RX_CHAN))
+			edma_writeb(fsl_edma, EDMA_CERR_CERR(EDMA_A011218_RX_CHAN), regs->cerr);
+		if (err & (0x1 << EDMA_A011218_TX_CHAN))
+			edma_writeb(fsl_edma, EDMA_CERR_CERR(EDMA_A011218_TX_CHAN), regs->cerr);
+	}
 
 	return IRQ_HANDLED;
 }
