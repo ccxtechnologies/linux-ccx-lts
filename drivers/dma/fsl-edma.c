@@ -42,7 +42,8 @@ static irqreturn_t fsl_edma_tx_handler(int irq, void *dev_id)
 
 	for (ch = 0; ch < fsl_edma->n_chans; ch++) {
 		if (intr & (0x1 << ch)) {
-			edma_writeb(fsl_edma, EDMA_CINT_CINT(ch), regs->cint);
+			dev_info(fsl_edma->dma_dev.dev, "==> Channel IRQ: %d\n", ch);
+
 
 			fsl_chan = &fsl_edma->chans[ch];
 
@@ -71,6 +72,9 @@ static irqreturn_t fsl_edma_tx_handler(int irq, void *dev_id)
 			spin_unlock(&fsl_chan->vchan.lock);
 		}
 	}
+
+	edma_writeb(fsl_edma, EDMA_CINT_CINT(intr), regs->cint);
+
 	return IRQ_HANDLED;
 }
 
@@ -87,11 +91,13 @@ static irqreturn_t fsl_edma_err_handler(int irq, void *dev_id)
 	for (ch = 0; ch < fsl_edma->n_chans; ch++) {
 		if (err & (0x1 << ch)) {
 			fsl_edma_disable_request(&fsl_edma->chans[ch]);
-			edma_writeb(fsl_edma, EDMA_CERR_CERR(ch), regs->cerr);
 			fsl_edma->chans[ch].status = DMA_ERROR;
 			fsl_edma->chans[ch].idle = true;
 		}
 	}
+
+	edma_writeb(fsl_edma, EDMA_CERR_CERR(err), regs->cerr);
+
 	return IRQ_HANDLED;
 }
 

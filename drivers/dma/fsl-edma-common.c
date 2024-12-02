@@ -421,7 +421,7 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 	if (fsl_chan->edma->drvdata->a011218) {
 		if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
 			ch = EDMA_A011218_RX_CHAN;
-		} else if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
+		} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
 			ch = EDMA_A011218_TX_CHAN;
 		}
 	}
