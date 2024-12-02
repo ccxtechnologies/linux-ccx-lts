@@ -60,7 +60,7 @@ static void fsl_edma_enable_request(struct fsl_edma_chan *fsl_chan)
 				edma_writeb(fsl_chan->edma,
 					EDMA_SEEI_SEEI(EDMA_A011218_RX_CHAN), regs->seei);
 				edma_writeb(fsl_chan->edma, EDMA_A011218_RX_CHAN, regs->serq);
-			} else if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
+			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
 				dev_info(fsl_chan->edma->dma_dev.dev,
 						"==> Enabling TX Channel for %d\n", ch);
 
@@ -98,7 +98,7 @@ void fsl_edma_disable_request(struct fsl_edma_chan *fsl_chan)
 				edma_writeb(fsl_chan->edma, EDMA_A011218_RX_CHAN, regs->cerq);
 				edma_writeb(fsl_chan->edma,
 						EDMA_CEEI_CEEI(EDMA_A011218_RX_CHAN), regs->ceei);
-			} else if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
+			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
 				dev_info(fsl_chan->edma->dma_dev.dev,
 						"==> Disabling TX Channel for %d\n", ch);
 
@@ -416,13 +416,25 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 {
 	struct fsl_edma_engine *edma = fsl_chan->edma;
 	struct edma_regs *regs = &fsl_chan->edma->regs;
-	u32 ch = fsl_chan->vchan.chan.chan_id, elink_ch;
+	u32 ch = fsl_chan->vchan.chan.chan_id;
+	u32 elink_ch = fsl_chan->vchan.chan.chan_id;
+	dma_addr_t a011218_dma;
 
 	if (fsl_chan->edma->drvdata->a011218) {
 		if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
 			ch = EDMA_A011218_RX_CHAN;
+			a011218_dma = fsl_chan->edma->a011218_dma_rx;
+
+			dev_info(&fsl_chan->vchan.chan.dev->device,
+					"==> Configuring linked RX channel %d for channel %d\n",
+					ch, elink_ch);
 		} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
 			ch = EDMA_A011218_TX_CHAN;
+			a011218_dma = fsl_chan->edma->a011218_dma_tx;
+
+			dev_info(&fsl_chan->vchan.chan.dev->device,
+					"==> Configuring linked TX channel %d for channel %d\n",
+					ch, elink_ch);
 		}
 	}
 
@@ -450,28 +462,21 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 
 	edma_writew(edma, tcd->csr, &regs->tcd[ch].csr);
 
+	return;
+
 	if (fsl_chan->edma->drvdata->a011218 &&
 		((fsl_chan->slave_id == EDMA_A011218_RX_SLOT) ||
 		 (fsl_chan->slave_id == EDMA_A011218_TX_SLOT))) {
-		elink_ch = fsl_chan->vchan.chan.chan_id;
 
 		dev_info(&fsl_chan->vchan.chan.dev->device,
-				"==> Configuring linked channel %d for channel %d\n",
-				ch, elink_ch);
+				"==> Configuring linked chan TCD 0x%04x\n", elink_ch);
 
 		edma_writew(edma, 0,  &regs->tcd[elink_ch].csr);
 
-		if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
-			edma_writel(edma, cpu_to_le32(fsl_chan->edma->a011218_dma_rx),
-					&regs->tcd[elink_ch].saddr);
-			edma_writel(edma, cpu_to_le32(fsl_chan->edma->a011218_dma_rx + sizeof(u32)),
-					&regs->tcd[elink_ch].daddr);
-		} else {
-			edma_writel(edma, cpu_to_le32(fsl_chan->edma->a011218_dma_tx),
-					&regs->tcd[elink_ch].saddr);
-			edma_writel(edma, cpu_to_le32(fsl_chan->edma->a011218_dma_tx + sizeof(u32)),
-					&regs->tcd[elink_ch].daddr);
-		}
+		edma_writel(edma, cpu_to_le32(a011218_dma),
+				&regs->tcd[elink_ch].saddr);
+		edma_writel(edma, cpu_to_le32(a011218_dma + sizeof(u32)),
+				&regs->tcd[elink_ch].daddr);
 
 		edma_writew(edma, cpu_to_le32(0x0202), &regs->tcd[elink_ch].attr);
 		edma_writew(edma, 0, &regs->tcd[elink_ch].soff);
@@ -480,18 +485,17 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 		edma_writel(edma, 0, &regs->tcd[elink_ch].slast);
 
 		edma_writew(edma,
-				tcd->citer | cpu_to_le16(EDMA_TCD_CITER_ELINK | EDMA_TCD_CITER_LINK(ch)),
+				tcd->citer | cpu_to_le16(EDMA_TCD_CITER_LINK(ch)),
 				&regs->tcd[elink_ch].citer);
 		edma_writew(edma,
-				(u16)tcd->biter |
-				cpu_to_le16(EDMA_TCD_BITER_ELINK | EDMA_TCD_BITER_LINK(ch)),
+				cpu_to_le16(EDMA_TCD_BITER_LINK(ch)),
 				&regs->tcd[elink_ch].biter);
-		edma_writew(edma, tcd->doff, &regs->tcd[elink_ch].doff);
+		edma_writew(edma, 0, &regs->tcd[elink_ch].doff);
 
 		edma_writel(edma, 0, &regs->tcd[elink_ch].dlast_sga);
 
 		edma_writew(edma, tcd->csr |
-				cpu_to_le16(EDMA_TCD_CSR_E_LINK | EDMA_TCD_CSR_LINK(ch)),
+				cpu_to_le16(EDMA_TCD_CSR_LINK(ch)),
 				&regs->tcd[elink_ch].csr);
 
 	}
