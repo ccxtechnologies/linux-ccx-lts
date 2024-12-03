@@ -18,6 +18,7 @@
 #include <linux/regmap.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/spi-fsl-dspi.h>
+#include <linux/time.h>
 
 #define DRIVER_NAME			"fsl-dspi"
 
@@ -367,12 +368,16 @@ static void dspi_tx_dma_callback(void *arg)
 static void dspi_rx_dma_callback(void *arg)
 {
 	struct fsl_dspi *dspi = arg;
+	struct device *dev = &dspi->pdev->dev;
 	struct fsl_dspi_dma *dma = dspi->dma;
 	int i;
 
 	if (dspi->rx) {
-		for (i = 0; i < dspi->words_in_flight; i++)
+		for (i = 0; i < dspi->words_in_flight; i++) {
+			dev_info(dev, "==> RX WORD: %d --> 0x%04x\n",
+					i, be32_to_cpu(dspi->dma->rx_dma_buf[i]));
 			dspi_push_rx(dspi, be32_to_cpu(dspi->dma->rx_dma_buf[i]));
+		}
 	}
 
 	complete(&dma->cmd_rx_complete);
@@ -382,11 +387,15 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 {
 	struct device *dev = &dspi->pdev->dev;
 	struct fsl_dspi_dma *dma = dspi->dma;
+	struct timespec64 tv_start, tv_end;
 	int time_left;
 	int i;
 
-	for (i = 0; i < dspi->words_in_flight; i++)
+	for (i = 0; i < dspi->words_in_flight; i++) {
 		dspi->dma->tx_dma_buf[i] = cpu_to_be32(dspi_pop_tx_pushr(dspi));
+		dev_info(dev, "==> TX WORD: %d --> 0x%04x\n",
+				i, be32_to_cpu(dspi->dma->tx_dma_buf[i]));
+	}
 
 	dma->tx_desc = dmaengine_prep_slave_single(dma->chan_tx,
 					dma->tx_dma_phys,
@@ -427,6 +436,8 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	reinit_completion(&dspi->dma->cmd_rx_complete);
 	reinit_completion(&dspi->dma->cmd_tx_complete);
 
+	ktime_get_real_ts64(&tv_start);
+
 	dma_async_issue_pending(dma->chan_rx);
 	dma_async_issue_pending(dma->chan_tx);
 
@@ -444,8 +455,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 		return -ETIMEDOUT;
 	}
 
-	dev_info(dev, "==> tx time left: %d\n", time_left);
-
 	time_left = wait_for_completion_timeout(&dspi->dma->cmd_rx_complete,
 						DMA_COMPLETION_TIMEOUT);
 	if (time_left == 0) {
@@ -455,7 +464,11 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 		return -ETIMEDOUT;
 	}
 
-	dev_info(dev, "==> rx time left: %d\n", time_left);
+	ktime_get_real_ts64(&tv_end);
+
+	dev_info(dev, "==> elapsed time: %lld ms\n",
+			((tv_end.tv_sec*MSEC_PER_SEC) + (tv_end.tv_nsec/NSEC_PER_MSEC)) -
+			((tv_start.tv_sec*MSEC_PER_SEC) + (tv_start.tv_nsec/NSEC_PER_MSEC)));
 
 	return 0;
 }
@@ -509,7 +522,7 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	if (!dma)
 		return -ENOMEM;
 
-	dma->buffer_size = 256;
+	dma->buffer_size = 256*sizeof(u32);
 
 	dma->chan_rx = dma_request_chan(dev, "rx");
 	if (IS_ERR(dma->chan_rx)) {
@@ -819,12 +832,19 @@ no_accel:
 
 static void dspi_setup_no_accel(struct fsl_dspi *dspi)
 {
-	struct spi_transfer *xfer = dspi->cur_transfer;
+	struct device *dev = &dspi->pdev->dev;
 
-	dspi->dev_to_host = dspi_native_dev_to_host;
-	dspi->host_to_dev = dspi_native_host_to_dev;
-	dspi->oper_bits_per_word = xfer->bits_per_word;
-	dspi->oper_word_size = DIV_ROUND_UP(dspi->oper_bits_per_word, 8);
+	if (!(dspi->len & 1)) {
+		dspi->oper_bits_per_word = 16;
+		dspi->oper_word_size = 2;
+		dspi->dev_to_host = dspi_8on16_dev_to_host;
+		dspi->host_to_dev = dspi_8on16_host_to_dev;
+	} else {
+		dspi->oper_bits_per_word = 8;
+		dspi->oper_word_size = 1;
+		dspi->dev_to_host = dspi_native_dev_to_host;
+		dspi->host_to_dev = dspi_native_host_to_dev;
+	}
 
 	regmap_write(dspi->regmap, SPI_CTAR(0),
 		     dspi->cur_chip->ctar_val |
@@ -926,7 +946,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int dspi_transfer_one_message(struct spi_controller *ctlr,
+static int dspi_transfer_one_message_fifo(struct spi_controller *ctlr,
 				     struct spi_message *message)
 {
 	struct fsl_dspi *dspi = spi_controller_get_devdata(ctlr);
@@ -972,20 +992,72 @@ static int dspi_transfer_one_message(struct spi_controller *ctlr,
 		spi_take_timestamp_pre(dspi->ctlr, dspi->cur_transfer,
 				       dspi->progress, !dspi->irq);
 
-		if (dspi->devtype_data->trans_mode == DSPI_DMA_MODE) {
-			status = dspi_dma_xfer(dspi);
-		} else {
-			dspi_fifo_write(dspi);
+		dspi_fifo_write(dspi);
 
-			if (dspi->irq) {
-				wait_for_completion(&dspi->xfer_done);
-				reinit_completion(&dspi->xfer_done);
-			} else {
-				do {
-					status = dspi_poll(dspi);
-				} while (status == -EINPROGRESS);
-			}
+		if (dspi->irq) {
+			wait_for_completion(&dspi->xfer_done);
+			reinit_completion(&dspi->xfer_done);
+		} else {
+			do {
+				status = dspi_poll(dspi);
+			} while (status == -EINPROGRESS);
 		}
+		if (status)
+			break;
+
+		spi_transfer_delay_exec(transfer);
+	}
+
+	message->status = status;
+	spi_finalize_current_message(ctlr);
+
+	return status;
+}
+
+static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
+				     struct spi_message *message)
+{
+	struct fsl_dspi *dspi = spi_controller_get_devdata(ctlr);
+	struct spi_device *spi = message->spi;
+	struct spi_transfer *transfer;
+	int status = 0;
+
+	message->actual_length = 0;
+
+	list_for_each_entry(transfer, &message->transfers, transfer_list) {
+		dspi->cur_transfer = transfer;
+		dspi->cur_msg = message;
+		dspi->cur_chip = spi_get_ctldata(spi);
+		/* Prepare command word for CMD FIFO */
+		dspi->tx_cmd = SPI_PUSHR_CMD_CTAS(0) |
+			       SPI_PUSHR_CMD_PCS(spi->chip_select);
+		if (list_is_last(&dspi->cur_transfer->transfer_list,
+				 &dspi->cur_msg->transfers)) {
+			/* Leave PCS activated after last transfer when
+			 * cs_change is set.
+			 */
+			if (transfer->cs_change)
+				dspi->tx_cmd |= SPI_PUSHR_CMD_CONT;
+		} else {
+			/* Keep PCS active between transfers in same message
+			 * when cs_change is not set, and de-activate PCS
+			 * between transfers in the same message when
+			 * cs_change is set.
+			 */
+			if (!transfer->cs_change)
+				dspi->tx_cmd |= SPI_PUSHR_CMD_CONT;
+		}
+
+		dspi->tx = transfer->tx_buf;
+		dspi->rx = transfer->rx_buf;
+		dspi->len = transfer->len;
+		dspi->progress = 0;
+
+		regmap_update_bits(dspi->regmap, SPI_MCR,
+				   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF,
+				   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF);
+
+		status = dspi_dma_xfer(dspi);
 		if (status)
 			break;
 
@@ -1283,7 +1355,6 @@ static int dspi_probe(struct platform_device *pdev)
 	dspi->ctlr = ctlr;
 
 	ctlr->setup = dspi_setup;
-	ctlr->transfer_one_message = dspi_transfer_one_message;
 	ctlr->dev.of_node = pdev->dev.of_node;
 
 	ctlr->cleanup = dspi_cleanup;
@@ -1330,10 +1401,13 @@ static int dspi_probe(struct platform_device *pdev)
 		dspi->pushr_tx = 0;
 	}
 
-	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE)
+	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE) {
+		ctlr->transfer_one_message = dspi_transfer_one_message_fifo;
 		ctlr->bits_per_word_mask = SPI_BPW_RANGE_MASK(4, 32);
-	else
-		ctlr->bits_per_word_mask = SPI_BPW_RANGE_MASK(4, 16);
+	} else {
+		ctlr->transfer_one_message = dspi_transfer_one_message_dma;
+		ctlr->bits_per_word_mask = SPI_BPW_MASK(16) | SPI_BPW_MASK(8);
+	}
 
 	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
 	if (IS_ERR(base)) {
