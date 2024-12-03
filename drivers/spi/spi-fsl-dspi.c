@@ -930,6 +930,9 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 
 	message->actual_length = 0;
 
+	dspi->cur_msg = message;
+	dspi->cur_chip = spi_get_ctldata(spi);
+
 	regmap_write(dspi->regmap, SPI_CTAR(0),
 		     dspi->cur_chip->ctar_val |
 		     SPI_FRAME_BITS(8));
@@ -958,25 +961,45 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 
 		if (transfer->bits_per_word == 16) {
 			cmd = SPI_PUSHR_CMD_CTAS(1) | SPI_PUSHR_CMD_PCS(spi->chip_select);
-
-			for (i = 0; i < (transfer->len-1); i++) {
-				dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u16*)transfer->tx_buf)[i]);
-				dev_info(dev, "==> TX WORD 16-bit: %d --> 0x%04x\n",
-						i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
-			}
-			dma->tx_dma_buf[i+offset] = cpu_to_be32(((cmd | end_cmd) << 16) | ((u16*)transfer->tx_buf)[i]);
-			dev_info(dev, "==> TX END WORD 16-bit: %d --> 0x%04x\n",
-					i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 		} else {
 			cmd = SPI_PUSHR_CMD_CTAS(0) | SPI_PUSHR_CMD_PCS(spi->chip_select);
+		}
 
+		if (transfer->tx_buf) {
+			if (transfer->bits_per_word == 16) {
+				for (i = 0; i < (transfer->len-1); i++) {
+					dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u16*)transfer->tx_buf)[i]);
+					dev_info(dev, "==> TX WORD 16-bit: %d --> 0x%04x\n",
+							i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
+					message->actual_length += 2;
+				}
+
+				dma->tx_dma_buf[i+offset] = cpu_to_be32(((cmd | end_cmd) << 16) | ((u16*)transfer->tx_buf)[i]);
+				dev_info(dev, "==> TX END WORD 16-bit: %d --> 0x%04x\n",
+						i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
+				message->actual_length += 2;
+			} else {
+				for (i = 0; i < (transfer->len-1); i++) {
+					dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u8*)transfer->tx_buf)[i]);
+					dev_info(dev, "==> TX WORD 8-bit: %d --> 0x%04x\n",
+							i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
+					message->actual_length++;
+				}
+
+				dma->tx_dma_buf[i+offset] = cpu_to_be32(((cmd | end_cmd) << 16) | ((u8*)transfer->tx_buf)[i]);
+				dev_info(dev, "==> TX END WORD 8-bit: %d --> 0x%04x\n",
+						i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
+				message->actual_length++;
+			}
+		} else {
 			for (i = 0; i < (transfer->len-1); i++) {
-				dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u8*)transfer->tx_buf)[i]);
-				dev_info(dev, "==> TX WORD 8-bit: %d --> 0x%04x\n",
+				dma->tx_dma_buf[i+offset] = cpu_to_be32(cmd << 16);
+				dev_info(dev, "==> TX WORD EMPTY: %d --> 0x%04x\n",
 						i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 			}
-			dma->tx_dma_buf[i+offset] = cpu_to_be32(((cmd | end_cmd) << 16) | ((u8*)transfer->tx_buf)[i]);
-			dev_info(dev, "==> TX END WORD 8-bit: %d --> 0x%04x\n",
+
+			dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd | end_cmd) << 16);
+			dev_info(dev, "==> TX END WORD EMPTY: %d --> 0x%04x\n",
 					i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 		}
 
@@ -999,10 +1022,12 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 					offset, i,
 					be32_to_cpu(dma->rx_dma_buf[offset + i]));
 
-			if (transfer->bits_per_word == 16) {
-				((u16*)transfer->rx_buf)[i] = be32_to_cpu(dma->rx_dma_buf[offset + i]);
-			} else {
-				((u8*)transfer->rx_buf)[i] = be32_to_cpu(dma->rx_dma_buf[offset + i]);
+			if (transfer->rx_buf) {
+				if (transfer->bits_per_word == 16) {
+					((u16*)transfer->rx_buf)[i] = be32_to_cpu(dma->rx_dma_buf[offset + i]);
+				} else {
+					((u8*)transfer->rx_buf)[i] = be32_to_cpu(dma->rx_dma_buf[offset + i]);
+				}
 			}
 		}
 		offset += transfer->len;
