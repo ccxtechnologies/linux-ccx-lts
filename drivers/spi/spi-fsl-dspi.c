@@ -929,6 +929,7 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 	u16 cmd, end_cmd;
 
 	message->actual_length = 0;
+	dspi->words_in_flight = 0;
 
 	dspi->cur_msg = message;
 	dspi->cur_chip = spi_get_ctldata(spi);
@@ -950,57 +951,67 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 			return -EINVAL;
 		}
 
-		end_cmd = 0;
+		end_cmd = SPI_PUSHR_CMD_PCS(spi->chip_select);
 		if (list_is_last(&transfer->transfer_list, &message->transfers)) {
 			if (transfer->cs_change)
-				end_cmd = SPI_PUSHR_CMD_CONT;
+				end_cmd |= SPI_PUSHR_CMD_CONT;
 		} else {
 			if (!transfer->cs_change)
-				end_cmd = SPI_PUSHR_CMD_CONT;
+				end_cmd |= SPI_PUSHR_CMD_CONT;
 		}
 
+		cmd = SPI_PUSHR_CMD_CONT | SPI_PUSHR_CMD_PCS(spi->chip_select);
+
 		if (transfer->bits_per_word == 16) {
-			cmd = SPI_PUSHR_CMD_CTAS(1) | SPI_PUSHR_CMD_PCS(spi->chip_select);
+			cmd |= SPI_PUSHR_CMD_CTAS(1);
+			end_cmd |= SPI_PUSHR_CMD_CTAS(1);
 		} else {
-			cmd = SPI_PUSHR_CMD_CTAS(0) | SPI_PUSHR_CMD_PCS(spi->chip_select);
+			cmd |= SPI_PUSHR_CMD_CTAS(0);
+			end_cmd |= SPI_PUSHR_CMD_CTAS(0);
 		}
 
 		if (transfer->tx_buf) {
 			if (transfer->bits_per_word == 16) {
 				for (i = 0; i < (transfer->len-1); i++) {
 					dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u16*)transfer->tx_buf)[i]);
-					dev_info(dev, "==> TX WORD 16-bit: %d --> 0x%04x\n",
+					dev_info(dev, "==> TX WORD 16-bit: %d --> 0x%08x\n",
 							i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 					message->actual_length += 2;
+					dspi->words_in_flight++;
 				}
 
-				dma->tx_dma_buf[i+offset] = cpu_to_be32(((cmd | end_cmd) << 16) | ((u16*)transfer->tx_buf)[i]);
-				dev_info(dev, "==> TX END WORD 16-bit: %d --> 0x%04x\n",
+				dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16) | ((u16*)transfer->tx_buf)[i]);
+				dev_info(dev, "==> TX END WORD 16-bit: %d --> 0x%08x\n",
 						i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 				message->actual_length += 2;
+				dspi->words_in_flight++;
 			} else {
 				for (i = 0; i < (transfer->len-1); i++) {
 					dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u8*)transfer->tx_buf)[i]);
-					dev_info(dev, "==> TX WORD 8-bit: %d --> 0x%04x\n",
+					dev_info(dev, "==> TX WORD 8-bit: %d --> 0x%08x\n",
 							i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 					message->actual_length++;
+					dspi->words_in_flight++;
 				}
 
-				dma->tx_dma_buf[i+offset] = cpu_to_be32(((cmd | end_cmd) << 16) | ((u8*)transfer->tx_buf)[i]);
-				dev_info(dev, "==> TX END WORD 8-bit: %d --> 0x%04x\n",
+				dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16) | ((u8*)transfer->tx_buf)[i]);
+				dev_info(dev, "==> TX END WORD 8-bit: %d --> 0x%08x\n",
 						i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 				message->actual_length++;
+				dspi->words_in_flight++;
 			}
 		} else {
 			for (i = 0; i < (transfer->len-1); i++) {
 				dma->tx_dma_buf[i+offset] = cpu_to_be32(cmd << 16);
-				dev_info(dev, "==> TX WORD EMPTY: %d --> 0x%04x\n",
+				dev_info(dev, "==> TX WORD EMPTY: %d --> 0x%08x\n",
 						i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
+				dspi->words_in_flight++;
 			}
 
-			dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd | end_cmd) << 16);
-			dev_info(dev, "==> TX END WORD EMPTY: %d --> 0x%04x\n",
+			dma->tx_dma_buf[i+offset] = cpu_to_be32(end_cmd << 16);
+			dev_info(dev, "==> TX END WORD EMPTY: %d --> 0x%08x\n",
 					i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
+			dspi->words_in_flight++;
 		}
 
 		offset += transfer->len;
@@ -1018,7 +1029,7 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 	offset = 0;
 	list_for_each_entry(transfer, &message->transfers, transfer_list) {
 		for (i = 0; i < transfer->len; i++) {
-			dev_info(dev, "==> RX WORD: %d -- %d --> 0x%04x\n",
+			dev_info(dev, "==> RX WORD: %d -- %d --> 0x%08x\n",
 					offset, i,
 					be32_to_cpu(dma->rx_dma_buf[offset + i]));
 
