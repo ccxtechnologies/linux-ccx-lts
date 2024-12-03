@@ -18,7 +18,6 @@
 #include <linux/regmap.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/spi-fsl-dspi.h>
-#include <linux/time.h>
 
 #define DRIVER_NAME			"fsl-dspi"
 
@@ -368,17 +367,7 @@ static void dspi_tx_dma_callback(void *arg)
 static void dspi_rx_dma_callback(void *arg)
 {
 	struct fsl_dspi *dspi = arg;
-	struct device *dev = &dspi->pdev->dev;
 	struct fsl_dspi_dma *dma = dspi->dma;
-	int i;
-
-	if (dspi->rx) {
-		for (i = 0; i < dspi->words_in_flight; i++) {
-			dev_info(dev, "==> RX WORD: %d --> 0x%04x\n",
-					i, be32_to_cpu(dspi->dma->rx_dma_buf[i]));
-			dspi_push_rx(dspi, be32_to_cpu(dspi->dma->rx_dma_buf[i]));
-		}
-	}
 
 	complete(&dma->cmd_rx_complete);
 }
@@ -387,15 +376,7 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 {
 	struct device *dev = &dspi->pdev->dev;
 	struct fsl_dspi_dma *dma = dspi->dma;
-	struct timespec64 tv_start, tv_end;
 	int time_left;
-	int i;
-
-	for (i = 0; i < dspi->words_in_flight; i++) {
-		dspi->dma->tx_dma_buf[i] = cpu_to_be32(dspi_pop_tx_pushr(dspi));
-		dev_info(dev, "==> TX WORD: %d --> 0x%04x\n",
-				i, be32_to_cpu(dspi->dma->tx_dma_buf[i]));
-	}
 
 	dma->tx_desc = dmaengine_prep_slave_single(dma->chan_tx,
 					dma->tx_dma_phys,
@@ -436,8 +417,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	reinit_completion(&dspi->dma->cmd_rx_complete);
 	reinit_completion(&dspi->dma->cmd_tx_complete);
 
-	ktime_get_real_ts64(&tv_start);
-
 	dma_async_issue_pending(dma->chan_rx);
 	dma_async_issue_pending(dma->chan_tx);
 
@@ -464,52 +443,11 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 		return -ETIMEDOUT;
 	}
 
-	ktime_get_real_ts64(&tv_end);
-
-	dev_info(dev, "==> elapsed time: %lld ms\n",
-			((tv_end.tv_sec*MSEC_PER_SEC) + (tv_end.tv_nsec/NSEC_PER_MSEC)) -
-			((tv_start.tv_sec*MSEC_PER_SEC) + (tv_start.tv_nsec/NSEC_PER_MSEC)));
-
 	return 0;
 }
 
 static void dspi_setup_accel(struct fsl_dspi *dspi);
 static void dspi_setup_no_accel(struct fsl_dspi *dspi);
-
-static int dspi_dma_xfer(struct fsl_dspi *dspi)
-{
-	struct spi_message *message = dspi->cur_msg;
-	struct device *dev = &dspi->pdev->dev;
-	struct fsl_dspi_dma *dma = dspi->dma;
-	int ret = 0;
-
-	/*
-	 * dspi->len gets decremented by dspi_pop_tx_pushr in
-	 * dspi_next_xfer_dma_submit
-	 */
-	while (dspi->len) {
-		dspi_setup_no_accel(dspi);
-
-		dspi->words_in_flight = dspi->len / dspi->oper_word_size;
-		if (dspi->words_in_flight > (dma->buffer_size / dspi->oper_word_size))
-			dspi->words_in_flight = dma->buffer_size / dspi->oper_word_size;
-
-		message->actual_length += dspi->words_in_flight *
-					  dspi->oper_word_size;
-
-		ret = dspi_next_xfer_dma_submit(dspi);
-		if (ret) {
-			dev_err(dev, "DMA transfer failed\n");
-			break;
-		}
-
-		if (dspi->len)
-			dev_info(dev, "==> Multi stage transaction? %d\n", dspi->words_in_flight);
-
-	}
-
-	return ret;
-}
 
 static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 {
@@ -832,8 +770,6 @@ no_accel:
 
 static void dspi_setup_no_accel(struct fsl_dspi *dspi)
 {
-	struct device *dev = &dspi->pdev->dev;
-
 	if (!(dspi->len & 1)) {
 		dspi->oper_bits_per_word = 16;
 		dspi->oper_word_size = 2;
@@ -1019,8 +955,10 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 {
 	struct fsl_dspi *dspi = spi_controller_get_devdata(ctlr);
 	struct spi_device *spi = message->spi;
+	struct device *dev = &dspi->pdev->dev;
+	struct fsl_dspi_dma *dma = dspi->dma;
 	struct spi_transfer *transfer;
-	int status = 0;
+	int status = 0, i;
 
 	message->actual_length = 0;
 
@@ -1057,7 +995,39 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 				   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF,
 				   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF);
 
-		status = dspi_dma_xfer(dspi);
+
+		while (dspi->len) {
+			dspi_setup_no_accel(dspi);
+
+			dspi->words_in_flight = dspi->len / dspi->oper_word_size;
+			if (dspi->words_in_flight > (dma->buffer_size / dspi->oper_word_size))
+				dspi->words_in_flight = dma->buffer_size / dspi->oper_word_size;
+
+			message->actual_length += dspi->words_in_flight *
+						  dspi->oper_word_size;
+
+			for (i = 0; i < dspi->words_in_flight; i++) {
+				dspi->dma->tx_dma_buf[i] = cpu_to_be32(dspi_pop_tx_pushr(dspi));
+				dev_info(dev, "==> TX WORD: %d --> 0x%04x\n",
+						i, be32_to_cpu(dspi->dma->tx_dma_buf[i]));
+			}
+
+			status = dspi_next_xfer_dma_submit(dspi);
+			if (status) {
+				dev_err(dev, "DMA transfer failed\n");
+				break;
+			}
+
+			if (dspi->rx) {
+				for (i = 0; i < dspi->words_in_flight; i++) {
+					dev_info(dev, "==> RX WORD: %d --> 0x%04x\n",
+							i, be32_to_cpu(dspi->dma->rx_dma_buf[i]));
+					dspi_push_rx(dspi, be32_to_cpu(dspi->dma->rx_dma_buf[i]));
+				}
+			}
+
+		}
+
 		if (status)
 			break;
 
