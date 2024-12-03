@@ -335,19 +335,6 @@ static u32 dspi_pop_tx(struct fsl_dspi *dspi)
 	return txdata;
 }
 
-/* Prepare one TX FIFO entry (txdata plus cmd) */
-static u32 dspi_pop_tx_pushr(struct fsl_dspi *dspi)
-{
-	u16 cmd = dspi->tx_cmd, data = dspi_pop_tx(dspi);
-
-	if (spi_controller_is_slave(dspi->ctlr))
-		return data;
-
-	if (dspi->len > 0)
-		cmd |= SPI_PUSHR_CMD_CONT;
-	return cmd << 16 | data;
-}
-
 /* Push one word to the RX buffer from the POPR register (RX FIFO) */
 static void dspi_push_rx(struct fsl_dspi *dspi, u32 rxdata)
 {
@@ -447,7 +434,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 }
 
 static void dspi_setup_accel(struct fsl_dspi *dspi);
-static void dspi_setup_no_accel(struct fsl_dspi *dspi);
 
 static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 {
@@ -768,25 +754,6 @@ no_accel:
 		     SPI_FRAME_BITS(dspi->oper_bits_per_word));
 }
 
-static void dspi_setup_no_accel(struct fsl_dspi *dspi)
-{
-	if (!(dspi->len & 1)) {
-		dspi->oper_bits_per_word = 16;
-		dspi->oper_word_size = 2;
-		dspi->dev_to_host = dspi_8on16_dev_to_host;
-		dspi->host_to_dev = dspi_8on16_host_to_dev;
-	} else {
-		dspi->oper_bits_per_word = 8;
-		dspi->oper_word_size = 1;
-		dspi->dev_to_host = dspi_native_dev_to_host;
-		dspi->host_to_dev = dspi_native_host_to_dev;
-	}
-
-	regmap_write(dspi->regmap, SPI_CTAR(0),
-		     dspi->cur_chip->ctar_val |
-		     SPI_FRAME_BITS(dspi->oper_bits_per_word));
-}
-
 static void dspi_fifo_write(struct fsl_dspi *dspi)
 {
 	int num_fifo_entries = dspi->devtype_data->fifo_size;
@@ -958,80 +925,87 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 	struct device *dev = &dspi->pdev->dev;
 	struct fsl_dspi_dma *dma = dspi->dma;
 	struct spi_transfer *transfer;
-	int status = 0, i;
+	int status = 0, i, offset;
+	u16 cmd, end_cmd;
 
 	message->actual_length = 0;
 
+	regmap_write(dspi->regmap, SPI_CTAR(0),
+		     dspi->cur_chip->ctar_val |
+		     SPI_FRAME_BITS(8));
+
+	regmap_write(dspi->regmap, SPI_CTAR(1),
+		     dspi->cur_chip->ctar_val |
+		     SPI_FRAME_BITS(16));
+
+	offset = 0;
 	list_for_each_entry(transfer, &message->transfers, transfer_list) {
-		dspi->cur_transfer = transfer;
-		dspi->cur_msg = message;
-		dspi->cur_chip = spi_get_ctldata(spi);
-		/* Prepare command word for CMD FIFO */
-		dspi->tx_cmd = SPI_PUSHR_CMD_CTAS(0) |
-			       SPI_PUSHR_CMD_PCS(spi->chip_select);
-		if (list_is_last(&dspi->cur_transfer->transfer_list,
-				 &dspi->cur_msg->transfers)) {
-			/* Leave PCS activated after last transfer when
-			 * cs_change is set.
-			 */
+
+		if ((offset + transfer->len) > (dma->buffer_size/sizeof(u32))) {
+			dev_err(dev, "Maximum transfer SPI DMA size is %ld",
+					dma->buffer_size/sizeof(u32));
+			return -EINVAL;
+		}
+
+		end_cmd = 0;
+		if (list_is_last(&transfer->transfer_list, &message->transfers)) {
 			if (transfer->cs_change)
-				dspi->tx_cmd |= SPI_PUSHR_CMD_CONT;
+				end_cmd = SPI_PUSHR_CMD_CONT;
 		} else {
-			/* Keep PCS active between transfers in same message
-			 * when cs_change is not set, and de-activate PCS
-			 * between transfers in the same message when
-			 * cs_change is set.
-			 */
 			if (!transfer->cs_change)
-				dspi->tx_cmd |= SPI_PUSHR_CMD_CONT;
+				end_cmd = SPI_PUSHR_CMD_CONT;
 		}
 
-		dspi->tx = transfer->tx_buf;
-		dspi->rx = transfer->rx_buf;
-		dspi->len = transfer->len;
-		dspi->progress = 0;
+		if (transfer->bits_per_word == 16) {
+			cmd = SPI_PUSHR_CMD_CTAS(1) | SPI_PUSHR_CMD_PCS(spi->chip_select);
 
-		regmap_update_bits(dspi->regmap, SPI_MCR,
-				   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF,
-				   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF);
-
-
-		while (dspi->len) {
-			dspi_setup_no_accel(dspi);
-
-			dspi->words_in_flight = dspi->len / dspi->oper_word_size;
-			if (dspi->words_in_flight > (dma->buffer_size / dspi->oper_word_size))
-				dspi->words_in_flight = dma->buffer_size / dspi->oper_word_size;
-
-			message->actual_length += dspi->words_in_flight *
-						  dspi->oper_word_size;
-
-			for (i = 0; i < dspi->words_in_flight; i++) {
-				dspi->dma->tx_dma_buf[i] = cpu_to_be32(dspi_pop_tx_pushr(dspi));
-				dev_info(dev, "==> TX WORD: %d --> 0x%04x\n",
-						i, be32_to_cpu(dspi->dma->tx_dma_buf[i]));
+			for (i = 0; i < (transfer->len-1); i++) {
+				dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u16*)transfer->tx_buf)[i]);
+				dev_info(dev, "==> TX WORD 16-bit: %d --> 0x%04x\n",
+						i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 			}
+			dma->tx_dma_buf[i+offset] = cpu_to_be32(((cmd | end_cmd) << 16) | ((u16*)transfer->tx_buf)[i]);
+			dev_info(dev, "==> TX END WORD 16-bit: %d --> 0x%04x\n",
+					i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
+		} else {
+			cmd = SPI_PUSHR_CMD_CTAS(0) | SPI_PUSHR_CMD_PCS(spi->chip_select);
 
-			status = dspi_next_xfer_dma_submit(dspi);
-			if (status) {
-				dev_err(dev, "DMA transfer failed\n");
-				break;
+			for (i = 0; i < (transfer->len-1); i++) {
+				dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u8*)transfer->tx_buf)[i]);
+				dev_info(dev, "==> TX WORD 8-bit: %d --> 0x%04x\n",
+						i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 			}
-
-			if (dspi->rx) {
-				for (i = 0; i < dspi->words_in_flight; i++) {
-					dev_info(dev, "==> RX WORD: %d --> 0x%04x\n",
-							i, be32_to_cpu(dspi->dma->rx_dma_buf[i]));
-					dspi_push_rx(dspi, be32_to_cpu(dspi->dma->rx_dma_buf[i]));
-				}
-			}
-
+			dma->tx_dma_buf[i+offset] = cpu_to_be32(((cmd | end_cmd) << 16) | ((u8*)transfer->tx_buf)[i]);
+			dev_info(dev, "==> TX END WORD 8-bit: %d --> 0x%04x\n",
+					i, be32_to_cpu(dma->tx_dma_buf[i+offset]));
 		}
 
-		if (status)
-			break;
+		offset += transfer->len;
+	}
 
-		spi_transfer_delay_exec(transfer);
+	regmap_update_bits(dspi->regmap, SPI_MCR,
+			   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF,
+			   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF);
+
+	status = dspi_next_xfer_dma_submit(dspi);
+	if (status) {
+		dev_err(dev, "DMA transfer failed\n");
+	}
+
+	offset = 0;
+	list_for_each_entry(transfer, &message->transfers, transfer_list) {
+		for (i = 0; i < transfer->len; i++) {
+			dev_info(dev, "==> RX WORD: %d -- %d --> 0x%04x\n",
+					offset, i,
+					be32_to_cpu(dma->rx_dma_buf[offset + i]));
+
+			if (transfer->bits_per_word == 16) {
+				((u16*)transfer->rx_buf)[i] = be32_to_cpu(dma->rx_dma_buf[offset + i]);
+			} else {
+				((u8*)transfer->rx_buf)[i] = be32_to_cpu(dma->rx_dma_buf[offset + i]);
+			}
+		}
+		offset += transfer->len;
 	}
 
 	message->status = status;
