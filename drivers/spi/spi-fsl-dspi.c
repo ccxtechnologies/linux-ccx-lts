@@ -149,7 +149,7 @@ static const struct fsl_dspi_devtype_data devtype_data[] = {
 	},
 	[LS1012A] = {
 		.trans_mode		= DSPI_DMA_MODE,
-		.max_clock_factor	= 16, /* TODO: reset to 4, slowing down because of scope probes */
+		.max_clock_factor	= 4,
 		.fifo_size		= 16,
 	},
 	[LS1028A] = {
