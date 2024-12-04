@@ -197,7 +197,6 @@ struct fsl_dspi_dma {
 	u32					*tx_dma_buf;
 	struct dma_chan				*chan_tx;
 	dma_addr_t				tx_dma_phys;
-	struct completion			cmd_tx_complete;
 	struct dma_async_tx_descriptor		*tx_desc;
 
 	u32					*rx_dma_buf;
@@ -483,7 +482,6 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	}
 
 	dspi->dma = dma;
-	init_completion(&dma->cmd_tx_complete);
 	init_completion(&dma->cmd_rx_complete);
 
 	return 0;
