@@ -973,12 +973,14 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 		if (transfer->tx_buf) {
 			if (transfer->bits_per_word == 16) {
 				for (i = 0; i < (transfer->len-1); i++) {
-					dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u16*)transfer->tx_buf)[i]);
+					dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16)
+							| cpu_to_be16(((u16*)transfer->tx_buf)[i]));
 					message->actual_length += 2;
 					dspi->words_in_flight++;
 				}
 
-				dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16) | ((u16*)transfer->tx_buf)[i]);
+				dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16)
+						| cpu_to_be16(((u16*)transfer->tx_buf)[i]));
 				message->actual_length += 2;
 				dspi->words_in_flight++;
 			} else {
@@ -1019,7 +1021,7 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 		for (i = 0; i < transfer->len; i++) {
 			if (transfer->rx_buf) {
 				if (transfer->bits_per_word == 16) {
-					((u16*)transfer->rx_buf)[i] = be32_to_cpu(dma->rx_dma_buf[offset + i]);
+					((u16*)transfer->rx_buf)[i] = be16_to_cpu((u16)(be32_to_cpu(dma->rx_dma_buf[offset + i])));
 				} else {
 					((u8*)transfer->rx_buf)[i] = be32_to_cpu(dma->rx_dma_buf[offset + i]);
 				}
