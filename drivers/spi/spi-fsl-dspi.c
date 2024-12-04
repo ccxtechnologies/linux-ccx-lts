@@ -925,7 +925,7 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 	struct device *dev = &dspi->pdev->dev;
 	struct fsl_dspi_dma *dma = dspi->dma;
 	struct spi_transfer *transfer;
-	int status = 0, i, offset;
+	int status = 0, i, offset, bytes_per_word, num_words;
 	u16 cmd, end_cmd;
 
 	message->actual_length = 0;
@@ -962,7 +962,10 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 
 		cmd = SPI_PUSHR_CMD_CONT | SPI_PUSHR_CMD_PCS(spi->chip_select);
 
-		if (transfer->bits_per_word == 16) {
+		bytes_per_word = transfer->bits_per_word/8;
+		num_words = transfer->len/bytes_per_word;
+
+		if (bytes_per_word == 2) {
 			cmd |= SPI_PUSHR_CMD_CTAS(1);
 			end_cmd |= SPI_PUSHR_CMD_CTAS(1);
 		} else {
@@ -970,41 +973,34 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 			end_cmd |= SPI_PUSHR_CMD_CTAS(0);
 		}
 
-		if (transfer->tx_buf) {
-			if (transfer->bits_per_word == 16) {
-				for (i = 0; i < (transfer->len-1); i++) {
-					dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16)
-							| cpu_to_be16(((u16*)transfer->tx_buf)[i]));
-					message->actual_length += 2;
-					dspi->words_in_flight++;
-				}
-
-				dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16)
-						| cpu_to_be16(((u16*)transfer->tx_buf)[i]));
-				message->actual_length += 2;
-				dspi->words_in_flight++;
-			} else {
-				for (i = 0; i < (transfer->len-1); i++) {
-					dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16) | ((u8*)transfer->tx_buf)[i]);
-					message->actual_length++;
-					dspi->words_in_flight++;
-				}
-
-				dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16) | ((u8*)transfer->tx_buf)[i]);
-				message->actual_length++;
-				dspi->words_in_flight++;
-			}
-		} else {
-			for (i = 0; i < (transfer->len-1); i++) {
+		for (i = 0; i < (num_words-1); i++) {
+			if (transfer->tx_buf == NULL) {
 				dma->tx_dma_buf[i+offset] = cpu_to_be32(cmd << 16);
-				dspi->words_in_flight++;
+			} else if (bytes_per_word == 2) {
+				dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16)
+						| cpu_to_be16(((u16*)transfer->tx_buf)[i]));
+			} else {
+				dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16)
+						| ((u8*)transfer->tx_buf)[i]);
 			}
 
-			dma->tx_dma_buf[i+offset] = cpu_to_be32(end_cmd << 16);
+			message->actual_length += bytes_per_word;
 			dspi->words_in_flight++;
 		}
 
-		offset += transfer->len;
+		if (transfer->tx_buf == NULL) {
+			dma->tx_dma_buf[i+offset] = cpu_to_be32(end_cmd << 16);
+		} else if (bytes_per_word == 2) {
+			dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16)
+					| cpu_to_be16(((u16*)transfer->tx_buf)[i]));
+		} else {
+			dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16)
+					| ((u8*)transfer->tx_buf)[i]);
+		}
+		message->actual_length += bytes_per_word;
+		dspi->words_in_flight++;
+
+		offset += num_words;
 	}
 
 	regmap_update_bits(dspi->regmap, SPI_MCR,
@@ -1018,16 +1014,23 @@ static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
 
 	offset = 0;
 	list_for_each_entry(transfer, &message->transfers, transfer_list) {
-		for (i = 0; i < transfer->len; i++) {
-			if (transfer->rx_buf) {
-				if (transfer->bits_per_word == 16) {
-					((u16*)transfer->rx_buf)[i] = be16_to_cpu((u16)(be32_to_cpu(dma->rx_dma_buf[offset + i])));
+		bytes_per_word = transfer->bits_per_word/8;
+		num_words = transfer->len/bytes_per_word;
+
+		if (transfer->rx_buf) {
+			for (i = 0; i < num_words; i++) {
+				if (bytes_per_word == 2) {
+					((u16*)transfer->rx_buf)[i] =
+						be16_to_cpu((u16)(be32_to_cpu(dma->rx_dma_buf[offset + i])));
 				} else {
-					((u8*)transfer->rx_buf)[i] = be32_to_cpu(dma->rx_dma_buf[offset + i]);
+					((u8*)transfer->rx_buf)[i] =
+						be32_to_cpu(dma->rx_dma_buf[offset + i]);
 				}
 			}
+
 		}
-		offset += transfer->len;
+
+		offset += num_words;
 	}
 
 	message->status = status;
@@ -1103,7 +1106,7 @@ static int dspi_setup(struct spi_device *spi)
 				  SPI_CTAR_PASC(pasc) |
 				  SPI_CTAR_ASC(asc) |
 				  SPI_CTAR_PBR(pbr) |
-				  SPI_CTAR_DT(br) |
+				  SPI_CTAR_DT(br*2) |
 				  SPI_CTAR_BR(br);
 
 		if (spi->mode & SPI_LSB_FIRST)
