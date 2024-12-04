@@ -343,14 +343,6 @@ static void dspi_push_rx(struct fsl_dspi *dspi, u32 rxdata)
 	dspi->dev_to_host(dspi, rxdata);
 }
 
-static void dspi_tx_dma_callback(void *arg)
-{
-	struct fsl_dspi *dspi = arg;
-	struct fsl_dspi_dma *dma = dspi->dma;
-
-	complete(&dma->cmd_tx_complete);
-}
-
 static void dspi_rx_dma_callback(void *arg)
 {
 	struct fsl_dspi *dspi = arg;
@@ -376,8 +368,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 		return -EIO;
 	}
 
-	dma->tx_desc->callback = dspi_tx_dma_callback;
-	dma->tx_desc->callback_param = dspi;
 	if (dma_submit_error(dmaengine_submit(dma->tx_desc))) {
 		dev_err(dev, "DMA submit failed\n");
 		return -EINVAL;
@@ -402,7 +392,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	}
 
 	reinit_completion(&dspi->dma->cmd_rx_complete);
-	reinit_completion(&dspi->dma->cmd_tx_complete);
 
 	dma_async_issue_pending(dma->chan_rx);
 	dma_async_issue_pending(dma->chan_tx);
@@ -410,15 +399,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	if (spi_controller_is_slave(dspi->ctlr)) {
 		wait_for_completion_interruptible(&dspi->dma->cmd_rx_complete);
 		return 0;
-	}
-
-	time_left = wait_for_completion_timeout(&dspi->dma->cmd_tx_complete,
-						DMA_COMPLETION_TIMEOUT);
-	if (time_left == 0) {
-		dev_err(dev, "DMA tx timeout\n");
-		dmaengine_terminate_all(dma->chan_tx);
-		dmaengine_terminate_all(dma->chan_rx);
-		return -ETIMEDOUT;
 	}
 
 	time_left = wait_for_completion_timeout(&dspi->dma->cmd_rx_complete,
@@ -1106,7 +1086,7 @@ static int dspi_setup(struct spi_device *spi)
 				  SPI_CTAR_PASC(pasc) |
 				  SPI_CTAR_ASC(asc) |
 				  SPI_CTAR_PBR(pbr) |
-				  SPI_CTAR_DT(br*2) |
+				  SPI_CTAR_DT(br) |
 				  SPI_CTAR_BR(br);
 
 		if (spi->mode & SPI_LSB_FIRST)
