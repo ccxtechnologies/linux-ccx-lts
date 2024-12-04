@@ -51,6 +51,19 @@ static void fsl_edma_enable_request(struct fsl_edma_chan *fsl_chan)
 	if (fsl_chan->edma->drvdata->version == v1) {
 		edma_writeb(fsl_chan->edma, EDMA_SEEI_SEEI(ch), regs->seei);
 		edma_writeb(fsl_chan->edma, ch, regs->serq);
+
+		if (fsl_chan->edma->drvdata->a011218) {
+			if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
+				edma_writeb(fsl_chan->edma,
+					EDMA_SEEI_SEEI(EDMA_A011218_RX_CHAN), regs->seei);
+				edma_writeb(fsl_chan->edma, EDMA_A011218_RX_CHAN, regs->serq);
+			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
+				edma_writeb(fsl_chan->edma,
+					EDMA_SEEI_SEEI(EDMA_A011218_TX_CHAN), regs->seei);
+				edma_writeb(fsl_chan->edma, EDMA_A011218_TX_CHAN, regs->serq);
+			}
+		}
+
 	} else {
 		/* ColdFire is big endian, and accesses natively
 		 * big endian I/O peripherals
@@ -58,6 +71,8 @@ static void fsl_edma_enable_request(struct fsl_edma_chan *fsl_chan)
 		iowrite8(EDMA_SEEI_SEEI(ch), regs->seei);
 		iowrite8(ch, regs->serq);
 	}
+
+
 }
 
 void fsl_edma_disable_request(struct fsl_edma_chan *fsl_chan)
@@ -68,6 +83,19 @@ void fsl_edma_disable_request(struct fsl_edma_chan *fsl_chan)
 	if (fsl_chan->edma->drvdata->version == v1) {
 		edma_writeb(fsl_chan->edma, ch, regs->cerq);
 		edma_writeb(fsl_chan->edma, EDMA_CEEI_CEEI(ch), regs->ceei);
+
+		if (fsl_chan->edma->drvdata->a011218) {
+			if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
+				edma_writeb(fsl_chan->edma, EDMA_A011218_RX_CHAN, regs->cerq);
+				edma_writeb(fsl_chan->edma,
+						EDMA_CEEI_CEEI(EDMA_A011218_RX_CHAN), regs->ceei);
+			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
+				edma_writeb(fsl_chan->edma, EDMA_A011218_TX_CHAN, regs->cerq);
+				edma_writeb(fsl_chan->edma,
+						EDMA_CEEI_CEEI(EDMA_A011218_TX_CHAN), regs->ceei);
+			}
+		}
+
 	} else {
 		/* ColdFire is big endian, and accesses natively
 		 * big endian I/O peripherals
@@ -109,17 +137,15 @@ void fsl_edma_chan_mux(struct fsl_edma_chan *fsl_chan,
 {
 	u32 ch = fsl_chan->vchan.chan.chan_id;
 	void __iomem *muxaddr;
-	unsigned int chans_per_mux, ch_off;
+	unsigned int ch_off;
 	int endian_diff[4] = {3, 1, -1, -3};
-	u32 dmamux_nr = fsl_chan->edma->drvdata->dmamuxs;
 
-	chans_per_mux = fsl_chan->edma->n_chans / dmamux_nr;
-	ch_off = fsl_chan->vchan.chan.chan_id % chans_per_mux;
+	ch_off = fsl_chan->vchan.chan.chan_id % fsl_chan->edma->chans_per_mux;
 
 	if (fsl_chan->edma->drvdata->mux_swap)
 		ch_off += endian_diff[ch_off % 4];
 
-	muxaddr = fsl_chan->edma->muxbase[ch / chans_per_mux];
+	muxaddr = fsl_chan->edma->muxbase[ch / fsl_chan->edma->chans_per_mux];
 	slot = EDMAMUX_CHCFG_SOURCE(slot);
 
 	if (fsl_chan->edma->drvdata->version == v3)
@@ -168,6 +194,14 @@ int fsl_edma_terminate_all(struct dma_chan *chan)
 	LIST_HEAD(head);
 
 	fsl_edma_disable_request(fsl_chan);
+
+	if (fsl_chan->edma->drvdata->a011218) {
+		if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
+			ch = EDMA_A011218_RX_CHAN;
+		} else if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
+			ch = EDMA_A011218_TX_CHAN;
+		}
+	}
 
 	/*
 	 * Checking ACTIVE to ensure minor loop stop indeed to prevent the
@@ -371,39 +405,75 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 	struct fsl_edma_engine *edma = fsl_chan->edma;
 	struct edma_regs *regs = &fsl_chan->edma->regs;
 	u32 ch = fsl_chan->vchan.chan.chan_id;
-	u16 csr = 0;
+	u32 elink_ch = fsl_chan->vchan.chan.chan_id;
+	dma_addr_t a011218_dma;
 
-	/*
-	 * TCD parameters are stored in struct fsl_edma_hw_tcd in little
-	 * endian format. However, we need to load the TCD registers in
-	 * big- or little-endian obeying the eDMA engine model endian,
-	 * and this is performed from specific edma_write functions
-	 */
+	if (fsl_chan->edma->drvdata->a011218) {
+		if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
+			ch = EDMA_A011218_RX_CHAN;
+			a011218_dma = fsl_chan->edma->a011218_dma_rx;
+		} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
+			ch = EDMA_A011218_TX_CHAN;
+			a011218_dma = fsl_chan->edma->a011218_dma_tx;
+		}
+	}
+
 	edma_writew(edma, 0,  &regs->tcd[ch].csr);
 
-	edma_writel(edma, (s32)tcd->saddr, &regs->tcd[ch].saddr);
-	edma_writel(edma, (s32)tcd->daddr, &regs->tcd[ch].daddr);
+	edma_writel(edma, tcd->saddr, &regs->tcd[ch].saddr);
+	edma_writel(edma, tcd->daddr, &regs->tcd[ch].daddr);
 
-	edma_writew(edma, (s16)tcd->attr, &regs->tcd[ch].attr);
+	edma_writew(edma, tcd->attr, &regs->tcd[ch].attr);
 	edma_writew(edma, tcd->soff, &regs->tcd[ch].soff);
 
-	edma_writel(edma, (s32)tcd->nbytes, &regs->tcd[ch].nbytes);
-	edma_writel(edma, (s32)tcd->slast, &regs->tcd[ch].slast);
+	edma_writel(edma, tcd->nbytes, &regs->tcd[ch].nbytes);
+	edma_writel(edma, tcd->slast, &regs->tcd[ch].slast);
 
-	edma_writew(edma, (s16)tcd->citer, &regs->tcd[ch].citer);
-	edma_writew(edma, (s16)tcd->biter, &regs->tcd[ch].biter);
-	edma_writew(edma, (s16)tcd->doff, &regs->tcd[ch].doff);
+	edma_writew(edma, tcd->citer, &regs->tcd[ch].citer);
+	edma_writew(edma, tcd->biter, &regs->tcd[ch].biter);
+	edma_writew(edma, tcd->doff, &regs->tcd[ch].doff);
 
-	edma_writel(edma, (s32)tcd->dlast_sga,
+	edma_writel(edma, tcd->dlast_sga,
 			&regs->tcd[ch].dlast_sga);
 
 	if (fsl_chan->is_sw) {
-		csr = le16_to_cpu(tcd->csr);
-		csr |= EDMA_TCD_CSR_START;
-		tcd->csr = cpu_to_le16(csr);
+		tcd->csr |= cpu_to_le16(EDMA_TCD_CSR_START);
 	}
 
-	edma_writew(edma, (s16)tcd->csr, &regs->tcd[ch].csr);
+	edma_writew(edma, tcd->csr, &regs->tcd[ch].csr);
+
+	if (fsl_chan->edma->drvdata->a011218 &&
+		((fsl_chan->slave_id == EDMA_A011218_RX_SLOT) ||
+		 (fsl_chan->slave_id == EDMA_A011218_TX_SLOT))) {
+
+		edma_writew(edma, 0,  &regs->tcd[elink_ch].csr);
+
+		edma_writel(edma, cpu_to_le32(a011218_dma),
+				&regs->tcd[elink_ch].saddr);
+		edma_writel(edma, cpu_to_le32(a011218_dma + sizeof(u32)),
+				&regs->tcd[elink_ch].daddr);
+
+		edma_writew(edma, cpu_to_le16(0x0202), &regs->tcd[elink_ch].attr);
+		edma_writew(edma, 0, &regs->tcd[elink_ch].soff);
+
+		edma_writel(edma, cpu_to_le32(sizeof(u32)), &regs->tcd[elink_ch].nbytes);
+		edma_writel(edma, 0, &regs->tcd[elink_ch].slast);
+
+		edma_writew(edma,
+				tcd->citer | cpu_to_le16(EDMA_TCD_CITER_LINK(ch)),
+				&regs->tcd[elink_ch].citer);
+		edma_writew(edma,
+				cpu_to_le16(EDMA_TCD_BITER_LINK(ch)),
+				&regs->tcd[elink_ch].biter);
+		edma_writew(edma, 0, &regs->tcd[elink_ch].doff);
+
+		edma_writel(edma, 0, &regs->tcd[elink_ch].dlast_sga);
+
+		edma_writew(edma, tcd->csr |
+				cpu_to_le16(EDMA_TCD_CSR_LINK(ch)),
+				&regs->tcd[elink_ch].csr);
+
+	}
 }
 
 static inline

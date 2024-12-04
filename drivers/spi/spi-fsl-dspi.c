@@ -148,8 +148,7 @@ static const struct fsl_dspi_devtype_data devtype_data[] = {
 		.fifo_size		= 4,
 	},
 	[LS1012A] = {
-		/* Has A-011218 DMA erratum */
-		.trans_mode		= DSPI_XSPI_MODE,
+		.trans_mode		= DSPI_DMA_MODE,
 		.max_clock_factor	= 4,
 		.fifo_size		= 16,
 	},
@@ -193,10 +192,11 @@ static const struct fsl_dspi_devtype_data devtype_data[] = {
 };
 
 struct fsl_dspi_dma {
+	int					buffer_size;
+
 	u32					*tx_dma_buf;
 	struct dma_chan				*chan_tx;
 	dma_addr_t				tx_dma_phys;
-	struct completion			cmd_tx_complete;
 	struct dma_async_tx_descriptor		*tx_desc;
 
 	u32					*rx_dma_buf;
@@ -334,19 +334,6 @@ static u32 dspi_pop_tx(struct fsl_dspi *dspi)
 	return txdata;
 }
 
-/* Prepare one TX FIFO entry (txdata plus cmd) */
-static u32 dspi_pop_tx_pushr(struct fsl_dspi *dspi)
-{
-	u16 cmd = dspi->tx_cmd, data = dspi_pop_tx(dspi);
-
-	if (spi_controller_is_slave(dspi->ctlr))
-		return data;
-
-	if (dspi->len > 0)
-		cmd |= SPI_PUSHR_CMD_CONT;
-	return cmd << 16 | data;
-}
-
 /* Push one word to the RX buffer from the POPR register (RX FIFO) */
 static void dspi_push_rx(struct fsl_dspi *dspi, u32 rxdata)
 {
@@ -355,24 +342,10 @@ static void dspi_push_rx(struct fsl_dspi *dspi, u32 rxdata)
 	dspi->dev_to_host(dspi, rxdata);
 }
 
-static void dspi_tx_dma_callback(void *arg)
-{
-	struct fsl_dspi *dspi = arg;
-	struct fsl_dspi_dma *dma = dspi->dma;
-
-	complete(&dma->cmd_tx_complete);
-}
-
 static void dspi_rx_dma_callback(void *arg)
 {
 	struct fsl_dspi *dspi = arg;
 	struct fsl_dspi_dma *dma = dspi->dma;
-	int i;
-
-	if (dspi->rx) {
-		for (i = 0; i < dspi->words_in_flight; i++)
-			dspi_push_rx(dspi, dspi->dma->rx_dma_buf[i]);
-	}
 
 	complete(&dma->cmd_rx_complete);
 }
@@ -382,10 +355,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	struct device *dev = &dspi->pdev->dev;
 	struct fsl_dspi_dma *dma = dspi->dma;
 	int time_left;
-	int i;
-
-	for (i = 0; i < dspi->words_in_flight; i++)
-		dspi->dma->tx_dma_buf[i] = dspi_pop_tx_pushr(dspi);
 
 	dma->tx_desc = dmaengine_prep_slave_single(dma->chan_tx,
 					dma->tx_dma_phys,
@@ -398,8 +367,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 		return -EIO;
 	}
 
-	dma->tx_desc->callback = dspi_tx_dma_callback;
-	dma->tx_desc->callback_param = dspi;
 	if (dma_submit_error(dmaengine_submit(dma->tx_desc))) {
 		dev_err(dev, "DMA submit failed\n");
 		return -EINVAL;
@@ -424,7 +391,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	}
 
 	reinit_completion(&dspi->dma->cmd_rx_complete);
-	reinit_completion(&dspi->dma->cmd_tx_complete);
 
 	dma_async_issue_pending(dma->chan_rx);
 	dma_async_issue_pending(dma->chan_tx);
@@ -432,15 +398,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	if (spi_controller_is_slave(dspi->ctlr)) {
 		wait_for_completion_interruptible(&dspi->dma->cmd_rx_complete);
 		return 0;
-	}
-
-	time_left = wait_for_completion_timeout(&dspi->dma->cmd_tx_complete,
-						DMA_COMPLETION_TIMEOUT);
-	if (time_left == 0) {
-		dev_err(dev, "DMA tx timeout\n");
-		dmaengine_terminate_all(dma->chan_tx);
-		dmaengine_terminate_all(dma->chan_rx);
-		return -ETIMEDOUT;
 	}
 
 	time_left = wait_for_completion_timeout(&dspi->dma->cmd_rx_complete,
@@ -457,40 +414,8 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 
 static void dspi_setup_accel(struct fsl_dspi *dspi);
 
-static int dspi_dma_xfer(struct fsl_dspi *dspi)
-{
-	struct spi_message *message = dspi->cur_msg;
-	struct device *dev = &dspi->pdev->dev;
-	int ret = 0;
-
-	/*
-	 * dspi->len gets decremented by dspi_pop_tx_pushr in
-	 * dspi_next_xfer_dma_submit
-	 */
-	while (dspi->len) {
-		/* Figure out operational bits-per-word for this chunk */
-		dspi_setup_accel(dspi);
-
-		dspi->words_in_flight = dspi->len / dspi->oper_word_size;
-		if (dspi->words_in_flight > dspi->devtype_data->fifo_size)
-			dspi->words_in_flight = dspi->devtype_data->fifo_size;
-
-		message->actual_length += dspi->words_in_flight *
-					  dspi->oper_word_size;
-
-		ret = dspi_next_xfer_dma_submit(dspi);
-		if (ret) {
-			dev_err(dev, "DMA transfer failed\n");
-			break;
-		}
-	}
-
-	return ret;
-}
-
 static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 {
-	int dma_bufsize = dspi->devtype_data->fifo_size * 2;
 	struct device *dev = &dspi->pdev->dev;
 	struct dma_slave_config cfg;
 	struct fsl_dspi_dma *dma;
@@ -499,6 +424,8 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	dma = devm_kzalloc(dev, sizeof(*dma), GFP_KERNEL);
 	if (!dma)
 		return -ENOMEM;
+
+	dma->buffer_size = 256*sizeof(u32);
 
 	dma->chan_rx = dma_request_chan(dev, "rx");
 	if (IS_ERR(dma->chan_rx)) {
@@ -515,7 +442,7 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	}
 
 	dma->tx_dma_buf = dma_alloc_coherent(dma->chan_tx->device->dev,
-					     dma_bufsize, &dma->tx_dma_phys,
+					     dma->buffer_size, &dma->tx_dma_phys,
 					     GFP_KERNEL);
 	if (!dma->tx_dma_buf) {
 		ret = -ENOMEM;
@@ -523,7 +450,7 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	}
 
 	dma->rx_dma_buf = dma_alloc_coherent(dma->chan_rx->device->dev,
-					     dma_bufsize, &dma->rx_dma_phys,
+					     dma->buffer_size, &dma->rx_dma_phys,
 					     GFP_KERNEL);
 	if (!dma->rx_dma_buf) {
 		ret = -ENOMEM;
@@ -555,17 +482,16 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 	}
 
 	dspi->dma = dma;
-	init_completion(&dma->cmd_tx_complete);
 	init_completion(&dma->cmd_rx_complete);
 
 	return 0;
 
 err_slave_config:
 	dma_free_coherent(dma->chan_rx->device->dev,
-			  dma_bufsize, dma->rx_dma_buf, dma->rx_dma_phys);
+			  dma->buffer_size, dma->rx_dma_buf, dma->rx_dma_phys);
 err_rx_dma_buf:
 	dma_free_coherent(dma->chan_tx->device->dev,
-			  dma_bufsize, dma->tx_dma_buf, dma->tx_dma_phys);
+			  dma->buffer_size, dma->tx_dma_buf, dma->tx_dma_phys);
 err_tx_dma_buf:
 	dma_release_channel(dma->chan_tx);
 err_tx_channel:
@@ -579,20 +505,19 @@ err_tx_channel:
 
 static void dspi_release_dma(struct fsl_dspi *dspi)
 {
-	int dma_bufsize = dspi->devtype_data->fifo_size * 2;
 	struct fsl_dspi_dma *dma = dspi->dma;
 
 	if (!dma)
 		return;
 
 	if (dma->chan_tx) {
-		dma_free_coherent(dma->chan_tx->device->dev, dma_bufsize,
+		dma_free_coherent(dma->chan_tx->device->dev, dma->buffer_size,
 				  dma->tx_dma_buf, dma->tx_dma_phys);
 		dma_release_channel(dma->chan_tx);
 	}
 
 	if (dma->chan_rx) {
-		dma_free_coherent(dma->chan_rx->device->dev, dma_bufsize,
+		dma_free_coherent(dma->chan_rx->device->dev, dma->buffer_size,
 				  dma->rx_dma_buf, dma->rx_dma_phys);
 		dma_release_channel(dma->chan_rx);
 	}
@@ -628,7 +553,8 @@ static void hz_to_spi_baud(char *pbr, char *br, int speed_hz,
 		}
 
 	if (minscale == INT_MAX) {
-		pr_warn("Can not find valid baud rate,speed_hz is %d,clkrate is %ld, we use the max prescaler value.\n",
+		pr_warn("Can not find valid baud rate,speed_hz is %d,clkrate is %ld,"
+				" we use the max prescaler value.\n",
 			speed_hz, clkrate);
 		*pbr = ARRAY_SIZE(pbr_tbl) - 1;
 		*br =  ARRAY_SIZE(brs) - 1;
@@ -662,7 +588,8 @@ static void ns_delay_scale(char *psc, char *sc, int delay_ns,
 		}
 
 	if (minscale == INT_MAX) {
-		pr_warn("Cannot find correct scale values for %dns delay at clkrate %ld, using max prescaler value",
+		pr_warn("Cannot find correct scale values for %dns delay at clkrate %ld,"
+				" using max prescaler value",
 			delay_ns, clkrate);
 		*psc = ARRAY_SIZE(pscale_tbl) - 1;
 		*sc = SPI_CTAR_SCALE_BITS;
@@ -900,7 +827,7 @@ static irqreturn_t dspi_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int dspi_transfer_one_message(struct spi_controller *ctlr,
+static int dspi_transfer_one_message_fifo(struct spi_controller *ctlr,
 				     struct spi_message *message)
 {
 	struct fsl_dspi *dspi = spi_controller_get_devdata(ctlr);
@@ -946,24 +873,142 @@ static int dspi_transfer_one_message(struct spi_controller *ctlr,
 		spi_take_timestamp_pre(dspi->ctlr, dspi->cur_transfer,
 				       dspi->progress, !dspi->irq);
 
-		if (dspi->devtype_data->trans_mode == DSPI_DMA_MODE) {
-			status = dspi_dma_xfer(dspi);
-		} else {
-			dspi_fifo_write(dspi);
+		dspi_fifo_write(dspi);
 
-			if (dspi->irq) {
-				wait_for_completion(&dspi->xfer_done);
-				reinit_completion(&dspi->xfer_done);
-			} else {
-				do {
-					status = dspi_poll(dspi);
-				} while (status == -EINPROGRESS);
-			}
+		if (dspi->irq) {
+			wait_for_completion(&dspi->xfer_done);
+			reinit_completion(&dspi->xfer_done);
+		} else {
+			do {
+				status = dspi_poll(dspi);
+			} while (status == -EINPROGRESS);
 		}
 		if (status)
 			break;
 
 		spi_transfer_delay_exec(transfer);
+	}
+
+	message->status = status;
+	spi_finalize_current_message(ctlr);
+
+	return status;
+}
+
+static int dspi_transfer_one_message_dma(struct spi_controller *ctlr,
+				     struct spi_message *message)
+{
+	struct fsl_dspi *dspi = spi_controller_get_devdata(ctlr);
+	struct spi_device *spi = message->spi;
+	struct device *dev = &dspi->pdev->dev;
+	struct fsl_dspi_dma *dma = dspi->dma;
+	struct spi_transfer *transfer;
+	int status = 0, i, offset, bytes_per_word, num_words;
+	u16 cmd, end_cmd;
+
+	message->actual_length = 0;
+	dspi->words_in_flight = 0;
+
+	dspi->cur_msg = message;
+	dspi->cur_chip = spi_get_ctldata(spi);
+
+	regmap_write(dspi->regmap, SPI_CTAR(0),
+		     dspi->cur_chip->ctar_val |
+		     SPI_FRAME_BITS(8));
+
+	regmap_write(dspi->regmap, SPI_CTAR(1),
+		     dspi->cur_chip->ctar_val |
+		     SPI_FRAME_BITS(16));
+
+	offset = 0;
+	list_for_each_entry(transfer, &message->transfers, transfer_list) {
+
+		if ((offset + transfer->len) > (dma->buffer_size/sizeof(u32))) {
+			dev_err(dev, "Maximum transfer SPI DMA size is %ld",
+					dma->buffer_size/sizeof(u32));
+			return -EINVAL;
+		}
+
+		end_cmd = SPI_PUSHR_CMD_PCS(spi->chip_select);
+		if (list_is_last(&transfer->transfer_list, &message->transfers)) {
+			if (transfer->cs_change)
+				end_cmd |= SPI_PUSHR_CMD_CONT;
+		} else {
+			if (!transfer->cs_change)
+				end_cmd |= SPI_PUSHR_CMD_CONT;
+		}
+
+		cmd = SPI_PUSHR_CMD_CONT | SPI_PUSHR_CMD_PCS(spi->chip_select);
+
+		bytes_per_word = transfer->bits_per_word/8;
+		num_words = transfer->len/bytes_per_word;
+
+		if (bytes_per_word == 2) {
+			cmd |= SPI_PUSHR_CMD_CTAS(1);
+			end_cmd |= SPI_PUSHR_CMD_CTAS(1);
+		} else {
+			cmd |= SPI_PUSHR_CMD_CTAS(0);
+			end_cmd |= SPI_PUSHR_CMD_CTAS(0);
+		}
+
+		for (i = 0; i < (num_words-1); i++) {
+			if (transfer->tx_buf == NULL) {
+				dma->tx_dma_buf[i+offset] = cpu_to_be32(cmd << 16);
+			} else if (bytes_per_word == 2) {
+				dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16)
+						| cpu_to_be16(((u16*)transfer->tx_buf)[i]));
+			} else {
+				dma->tx_dma_buf[i+offset] = cpu_to_be32((cmd << 16)
+						| ((u8*)transfer->tx_buf)[i]);
+			}
+
+			message->actual_length += bytes_per_word;
+			dspi->words_in_flight++;
+		}
+
+		if (transfer->tx_buf == NULL) {
+			dma->tx_dma_buf[i+offset] = cpu_to_be32(end_cmd << 16);
+		} else if (bytes_per_word == 2) {
+			dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16)
+					| cpu_to_be16(((u16*)transfer->tx_buf)[i]));
+		} else {
+			dma->tx_dma_buf[i+offset] = cpu_to_be32((end_cmd << 16)
+					| ((u8*)transfer->tx_buf)[i]);
+		}
+		message->actual_length += bytes_per_word;
+		dspi->words_in_flight++;
+
+		offset += num_words;
+	}
+
+	regmap_update_bits(dspi->regmap, SPI_MCR,
+			   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF,
+			   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF);
+
+	status = dspi_next_xfer_dma_submit(dspi);
+	if (status) {
+		dev_err(dev, "DMA transfer failed\n");
+	}
+
+	offset = 0;
+	list_for_each_entry(transfer, &message->transfers, transfer_list) {
+		bytes_per_word = transfer->bits_per_word/8;
+		num_words = transfer->len/bytes_per_word;
+
+		if (transfer->rx_buf) {
+			for (i = 0; i < num_words; i++) {
+				if (bytes_per_word == 2) {
+					((u16*)transfer->rx_buf)[i] =
+						be16_to_cpu((u16)(be32_to_cpu(dma->rx_dma_buf[offset + i])));
+				} else {
+					((u8*)transfer->rx_buf)[i] =
+						be32_to_cpu(dma->rx_dma_buf[offset + i]);
+				}
+			}
+
+		}
+
+		offset += num_words;
 	}
 
 	message->status = status;
@@ -1039,6 +1084,7 @@ static int dspi_setup(struct spi_device *spi)
 				  SPI_CTAR_PASC(pasc) |
 				  SPI_CTAR_ASC(asc) |
 				  SPI_CTAR_PBR(pbr) |
+				  SPI_CTAR_DT(br) |
 				  SPI_CTAR_BR(br);
 
 		if (spi->mode & SPI_LSB_FIRST)
@@ -1257,7 +1303,6 @@ static int dspi_probe(struct platform_device *pdev)
 	dspi->ctlr = ctlr;
 
 	ctlr->setup = dspi_setup;
-	ctlr->transfer_one_message = dspi_transfer_one_message;
 	ctlr->dev.of_node = pdev->dev.of_node;
 
 	ctlr->cleanup = dspi_cleanup;
@@ -1304,10 +1349,13 @@ static int dspi_probe(struct platform_device *pdev)
 		dspi->pushr_tx = 0;
 	}
 
-	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE)
+	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE) {
+		ctlr->transfer_one_message = dspi_transfer_one_message_fifo;
 		ctlr->bits_per_word_mask = SPI_BPW_RANGE_MASK(4, 32);
-	else
-		ctlr->bits_per_word_mask = SPI_BPW_RANGE_MASK(4, 16);
+	} else {
+		ctlr->transfer_one_message = dspi_transfer_one_message_dma;
+		ctlr->bits_per_word_mask = SPI_BPW_MASK(16) | SPI_BPW_MASK(8);
+	}
 
 	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
 	if (IS_ERR(base)) {
