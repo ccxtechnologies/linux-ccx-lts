@@ -495,6 +495,9 @@ xfrmi_xmit2(struct sk_buff *skb, struct net_device *dev, struct flowi *fl)
 
 xmit:
 	xfrmi_scrub_packet(skb, !net_eq(xi->net, dev_net(dev)));
+    /* Fix tunneled routing errors when SO_BINDTODEVICE is set on socket */
+    if (skb->destructor)
+        skb_orphan(skb);
 	skb_dst_set(skb, dst);
 	skb->dev = tdev;
 
