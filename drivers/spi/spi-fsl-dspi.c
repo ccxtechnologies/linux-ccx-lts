@@ -892,14 +892,25 @@ static int dspi_transfer_one_message_fifo(struct spi_controller *ctlr,
 				   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF,
 				   SPI_MCR_CLR_TXF | SPI_MCR_CLR_RXF);
 
+		regmap_write(dspi->regmap, SPI_SR, SPI_SR_CLEAR);
+
 		spi_take_timestamp_pre(dspi->ctlr, dspi->cur_transfer,
 					   dspi->progress, !dspi->irq);
+
+		/*
+		* Reinitialize the completion before transferring data
+		* to avoid the case where it might remain in the done
+		* state due to a spurious interrupt from a previous
+		* transfer. This could falsely signal that the current
+		* transfer has completed.
+		*/
+		if (dspi->irq)
+			reinit_completion(&dspi->xfer_done);
 
 		dspi_fifo_write(dspi);
 
 		if (dspi->irq) {
 			wait_for_completion(&dspi->xfer_done);
-			reinit_completion(&dspi->xfer_done);
 		} else {
 			do {
 				status = dspi_poll(dspi);
