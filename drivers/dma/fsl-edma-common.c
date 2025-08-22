@@ -456,14 +456,15 @@ static void fsl_edma_set_tcd_regs(struct fsl_edma_chan *fsl_chan,
 		edma_writew(edma, cpu_to_le16(0x0202), &regs->tcd[elink_ch].attr);
 		edma_writew(edma, 0, &regs->tcd[elink_ch].soff);
 
-		edma_writel(edma, cpu_to_le32(sizeof(u32)), &regs->tcd[elink_ch].nbytes);
+		edma_writel(edma, cpu_to_le32(sizeof(u32)),
+                &regs->tcd[elink_ch].nbytes);
 		edma_writel(edma, 0, &regs->tcd[elink_ch].slast);
 
 		edma_writew(edma,
 				tcd->citer | cpu_to_le16(EDMA_TCD_CITER_LINK(ch)),
 				&regs->tcd[elink_ch].citer);
 		edma_writew(edma,
-				cpu_to_le16(EDMA_TCD_BITER_LINK(ch)),
+				tcd->biter | cpu_to_le16(EDMA_TCD_BITER_LINK(ch)),
 				&regs->tcd[elink_ch].biter);
 		edma_writew(edma, 0, &regs->tcd[elink_ch].doff);
 
