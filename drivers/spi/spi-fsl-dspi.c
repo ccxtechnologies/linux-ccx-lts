@@ -196,13 +196,11 @@ struct fsl_dspi_dma {
 	u32					*tx_dma_buf;
 	struct dma_chan				*chan_tx;
 	dma_addr_t				tx_dma_phys;
-	struct dma_async_tx_descriptor		*tx_desc;
 
 	u32					*rx_dma_buf;
 	struct dma_chan				*chan_rx;
 	dma_addr_t				rx_dma_phys;
 	struct completion			cmd_rx_complete;
-	struct dma_async_tx_descriptor		*rx_desc;
 };
 
 struct fsl_dspi {
@@ -351,62 +349,64 @@ static void dspi_rx_dma_callback(void *arg)
 
 static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 {
+	struct dma_async_tx_descriptor *tx_desc, *rx_desc;
+
 	struct device *dev = &dspi->pdev->dev;
 	struct fsl_dspi_dma *dma = dspi->dma;
-	int time_left;
+	int time_left, i;
 
-	dma->tx_desc = dmaengine_prep_slave_single(dma->chan_tx,
-					dma->tx_dma_phys,
-					dspi->words_in_flight *
-					DMA_SLAVE_BUSWIDTH_4_BYTES,
-					DMA_MEM_TO_DEV,
-					DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	if (!dma->tx_desc) {
-		dev_err(dev, "Not able to get desc for DMA xfer\n");
-		return -EIO;
-	}
+    dma_sync_single_for_device(dev, dma->tx_dma_phys,
+            dma->buffer_size, DMA_MEM_TO_DEV);
 
-	if (dma_submit_error(dmaengine_submit(dma->tx_desc))) {
-		dev_err(dev, "DMA submit failed\n");
-		return -EINVAL;
-	}
-
-	dma->rx_desc = dmaengine_prep_slave_single(dma->chan_rx,
+	rx_desc = dmaengine_prep_slave_single(dma->chan_rx,
 					dma->rx_dma_phys,
 					dspi->words_in_flight *
 					DMA_SLAVE_BUSWIDTH_4_BYTES,
 					DMA_DEV_TO_MEM,
 					DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
-	if (!dma->rx_desc) {
+	if (!rx_desc) {
 		dev_err(dev, "Not able to get desc for DMA xfer\n");
 		return -EIO;
 	}
 
-	dma->rx_desc->callback = dspi_rx_dma_callback;
-	dma->rx_desc->callback_param = dspi;
-	if (dma_submit_error(dmaengine_submit(dma->rx_desc))) {
+	rx_desc->callback = dspi_rx_dma_callback;
+	rx_desc->callback_param = dspi;
+	if (dma_submit_error(dmaengine_submit(rx_desc))) {
 		dev_err(dev, "DMA submit failed\n");
 		return -EINVAL;
 	}
 
 	reinit_completion(&dspi->dma->cmd_rx_complete);
-
 	dma_async_issue_pending(dma->chan_rx);
-	dma_async_issue_pending(dma->chan_tx);
 
-	if (spi_controller_is_slave(dspi->ctlr)) {
-		wait_for_completion_interruptible(&dspi->dma->cmd_rx_complete);
-		return 0;
+	tx_desc = dmaengine_prep_slave_single(dma->chan_tx,
+					dma->tx_dma_phys,
+					dspi->words_in_flight *
+					DMA_SLAVE_BUSWIDTH_4_BYTES,
+					DMA_MEM_TO_DEV,
+					DMA_PREP_INTERRUPT | DMA_CTRL_ACK);
+	if (!tx_desc) {
+		dev_err(dev, "Not able to get desc for DMA xfer\n");
+		return -EIO;
 	}
+
+	if (dma_submit_error(dmaengine_submit(tx_desc))) {
+		dev_err(dev, "DMA submit failed\n");
+		return -EINVAL;
+	}
+
+	dma_async_issue_pending(dma->chan_tx);
 
 	time_left = wait_for_completion_timeout(&dspi->dma->cmd_rx_complete,
 						DMA_COMPLETION_TIMEOUT);
 	if (time_left == 0) {
 		dev_err(dev, "DMA rx timeout\n");
-		dmaengine_terminate_all(dma->chan_tx);
 		dmaengine_terminate_all(dma->chan_rx);
 		return -ETIMEDOUT;
 	}
+
+    dma_sync_single_for_cpu(dev, dma->rx_dma_phys,
+            dma->buffer_size, DMA_DEV_TO_MEM);
 
 	return 0;
 }
@@ -416,7 +416,7 @@ static void dspi_setup_accel(struct fsl_dspi *dspi);
 static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 {
 	struct device *dev = &dspi->pdev->dev;
-	struct dma_slave_config cfg;
+	struct dma_slave_config rx_cfg = {}, tx_cfg = {};
 	struct fsl_dspi_dma *dma;
 	int ret;
 
@@ -456,24 +456,24 @@ static int dspi_request_dma(struct fsl_dspi *dspi, phys_addr_t phy_addr)
 		goto err_rx_dma_buf;
 	}
 
-	memset(&cfg, 0, sizeof(cfg));
-	cfg.src_addr = phy_addr + SPI_POPR;
-	cfg.dst_addr = phy_addr + SPI_PUSHR;
-	cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
-	cfg.src_maxburst = 1;
-	cfg.dst_maxburst = 1;
+	rx_cfg.direction = DMA_DEV_TO_MEM;
+	rx_cfg.src_addr = phy_addr + SPI_POPR;
+	rx_cfg.src_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+	rx_cfg.src_maxburst = 1;
 
-	cfg.direction = DMA_DEV_TO_MEM;
-	ret = dmaengine_slave_config(dma->chan_rx, &cfg);
+	ret = dmaengine_slave_config(dma->chan_rx, &rx_cfg);
 	if (ret) {
 		dev_err(dev, "can't configure rx dma channel\n");
 		ret = -EINVAL;
 		goto err_slave_config;
 	}
 
-	cfg.direction = DMA_MEM_TO_DEV;
-	ret = dmaengine_slave_config(dma->chan_tx, &cfg);
+	tx_cfg.direction = DMA_MEM_TO_DEV;
+	tx_cfg.dst_addr = phy_addr + SPI_PUSHR;
+	tx_cfg.dst_addr_width = DMA_SLAVE_BUSWIDTH_4_BYTES;
+	tx_cfg.dst_maxburst = 1;
+
+	ret = dmaengine_slave_config(dma->chan_tx, &tx_cfg);
 	if (ret) {
 		dev_err(dev, "can't configure tx dma channel\n");
 		ret = -EINVAL;
