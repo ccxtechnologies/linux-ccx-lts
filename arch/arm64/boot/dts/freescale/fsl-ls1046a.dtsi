@@ -488,7 +488,7 @@
 		};
 
 		dspi: spi@2100000 {
-			compatible = "fsl,ls1021a-v1.0-dspi";
+			compatible = "fsl,ls1046a-dspi";
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <0x0 0x2100000 0x0 0x10000>;

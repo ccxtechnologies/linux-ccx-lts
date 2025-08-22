@@ -49,20 +49,8 @@ static void fsl_edma_enable_request(struct fsl_edma_chan *fsl_chan)
 	u32 ch = fsl_chan->vchan.chan.chan_id;
 
 	if (fsl_chan->edma->drvdata->version == v1) {
-		edma_writeb(fsl_chan->edma, EDMA_SEEI_SEEI(ch), regs->seei);
-		edma_writeb(fsl_chan->edma, ch, regs->serq);
-
-		if (fsl_chan->edma->drvdata->a011218) {
-			if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
-				edma_writeb(fsl_chan->edma,
-					EDMA_SEEI_SEEI(EDMA_A011218_RX_CHAN), regs->seei);
-				edma_writeb(fsl_chan->edma, EDMA_A011218_RX_CHAN, regs->serq);
-			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
-				edma_writeb(fsl_chan->edma,
-					EDMA_SEEI_SEEI(EDMA_A011218_TX_CHAN), regs->seei);
-				edma_writeb(fsl_chan->edma, EDMA_A011218_TX_CHAN, regs->serq);
-			}
-		}
+        edma_writeb(fsl_chan->edma, EDMA_SEEI_SEEI(ch), regs->seei);
+        edma_writeb(fsl_chan->edma, ch, regs->serq);
 
 	} else {
 		/* ColdFire is big endian, and accesses natively
@@ -83,18 +71,6 @@ void fsl_edma_disable_request(struct fsl_edma_chan *fsl_chan)
 	if (fsl_chan->edma->drvdata->version == v1) {
 		edma_writeb(fsl_chan->edma, ch, regs->cerq);
 		edma_writeb(fsl_chan->edma, EDMA_CEEI_CEEI(ch), regs->ceei);
-
-		if (fsl_chan->edma->drvdata->a011218) {
-			if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
-				edma_writeb(fsl_chan->edma, EDMA_A011218_RX_CHAN, regs->cerq);
-				edma_writeb(fsl_chan->edma,
-						EDMA_CEEI_CEEI(EDMA_A011218_RX_CHAN), regs->ceei);
-			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
-				edma_writeb(fsl_chan->edma, EDMA_A011218_TX_CHAN, regs->cerq);
-				edma_writeb(fsl_chan->edma,
-						EDMA_CEEI_CEEI(EDMA_A011218_TX_CHAN), regs->ceei);
-			}
-		}
 
 	} else {
 		/* ColdFire is big endian, and accesses natively

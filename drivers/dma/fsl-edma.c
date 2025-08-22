@@ -45,15 +45,10 @@ static irqreturn_t fsl_edma_tx_handler(int irq, void *dev_id)
 		fsl_chan = &fsl_edma->chans[ch];
 
 		if (fsl_edma->drvdata->a011218) {
-			if (fsl_chan->slave_id == EDMA_A011218_RX_SLOT) {
-				if (intr & (0x1 << ch))
-					edma_writeb(fsl_edma, EDMA_CINT_CINT(ch), regs->cint);
-				ch = EDMA_A011218_RX_CHAN;
-			} else if (fsl_chan->slave_id == EDMA_A011218_TX_SLOT) {
-				if (intr & (0x1 << ch))
-					edma_writeb(fsl_edma, EDMA_CINT_CINT(ch), regs->cint);
-				ch = EDMA_A011218_TX_CHAN;
-			}
+            if (intr & (0x1 << EDMA_A011218_RX_CHAN))
+                edma_writeb(fsl_edma, EDMA_CINT_CINT(EDMA_A011218_RX_CHAN), regs->cint);
+            if (intr & (0x1 << EDMA_A011218_TX_CHAN))
+                edma_writeb(fsl_edma, EDMA_CINT_CINT(EDMA_A011218_TX_CHAN), regs->cint);
 		}
 
 		if (intr & (0x1 << ch)) {

@@ -355,8 +355,11 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	struct fsl_dspi_dma *dma = dspi->dma;
 	int time_left, i;
 
-    dma_sync_single_for_device(dev, dma->tx_dma_phys,
-            dma->buffer_size, DMA_MEM_TO_DEV);
+    printk(KERN_INFO " === Transfer of %d words\n",
+            dspi->words_in_flight);
+    for (i = 0; i < dspi->words_in_flight; i++) {
+        printk(KERN_INFO " >>> %d: 0x%08x\n", i, dma->tx_dma_buf[i]);
+    }
 
 	rx_desc = dmaengine_prep_slave_single(dma->chan_rx,
 					dma->rx_dma_phys,
@@ -379,6 +382,10 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	reinit_completion(&dspi->dma->cmd_rx_complete);
 	dma_async_issue_pending(dma->chan_rx);
 
+    dma_sync_single_for_device(dma->chan_tx->device->dev, dma->tx_dma_phys,
+            dspi->words_in_flight * DMA_SLAVE_BUSWIDTH_4_BYTES,
+            DMA_TO_DEVICE);
+
 	tx_desc = dmaengine_prep_slave_single(dma->chan_tx,
 					dma->tx_dma_phys,
 					dspi->words_in_flight *
@@ -389,6 +396,7 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 		dev_err(dev, "Not able to get desc for DMA xfer\n");
 		return -EIO;
 	}
+    // usleep_range(100000, 500000);
 
 	if (dma_submit_error(dmaengine_submit(tx_desc))) {
 		dev_err(dev, "DMA submit failed\n");
@@ -405,8 +413,13 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 		return -ETIMEDOUT;
 	}
 
-    dma_sync_single_for_cpu(dev, dma->rx_dma_phys,
-            dma->buffer_size, DMA_DEV_TO_MEM);
+    dma_sync_single_for_cpu(dma->chan_rx->device->dev, dma->rx_dma_phys,
+            dspi->words_in_flight * DMA_SLAVE_BUSWIDTH_4_BYTES,
+            DMA_FROM_DEVICE);
+
+    for (i = 0; i < dspi->words_in_flight; i++) {
+        printk(KERN_INFO " <<< %d: 0x%08x\n", i, dma->rx_dma_buf[i]);
+    }
 
 	return 0;
 }
