@@ -355,12 +355,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
 	struct fsl_dspi_dma *dma = dspi->dma;
 	int time_left, i;
 
-    printk(KERN_INFO " === Transfer of %d words\n",
-            dspi->words_in_flight);
-    for (i = 0; i < dspi->words_in_flight; i++) {
-        printk(KERN_INFO " >>> %d: 0x%08x\n", i, dma->tx_dma_buf[i]);
-    }
-
 	rx_desc = dmaengine_prep_slave_single(dma->chan_rx,
 					dma->rx_dma_phys,
 					dspi->words_in_flight *
@@ -416,10 +410,6 @@ static int dspi_next_xfer_dma_submit(struct fsl_dspi *dspi)
     dma_sync_single_for_cpu(dma->chan_rx->device->dev, dma->rx_dma_phys,
             dspi->words_in_flight * DMA_SLAVE_BUSWIDTH_4_BYTES,
             DMA_FROM_DEVICE);
-
-    for (i = 0; i < dspi->words_in_flight; i++) {
-        printk(KERN_INFO " <<< %d: 0x%08x\n", i, dma->rx_dma_buf[i]);
-    }
 
 	return 0;
 }
