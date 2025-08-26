@@ -349,9 +349,6 @@ enum dma_status fsl_edma_tx_status(struct dma_chan *chan,
 
 	status = dma_cookie_status(chan, cookie, txstate);
 	if (status == DMA_COMPLETE) {
-		spin_lock_irqsave(&fsl_chan->vchan.lock, flags);
-		txstate->residue = fsl_chan->chn_real_count;
-		spin_unlock_irqrestore(&fsl_chan->vchan.lock, flags);
 		return status;
 	}
 
