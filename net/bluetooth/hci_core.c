@@ -869,7 +869,7 @@ int hci_get_dev_info(void __user *arg)
 	else
 		flags = hdev->flags;
 
-	strscpy(di.name, hdev->name, sizeof(di.name));
+	strcpy(di.name, hdev->name);
 	di.bdaddr   = hdev->bdaddr;
 	di.type     = (hdev->bus & 0x0f) | ((hdev->dev_type & 0x03) << 4);
 	di.flags    = flags;
@@ -1452,8 +1452,8 @@ static void hci_cmd_timeout(struct work_struct *work)
 	struct hci_dev *hdev = container_of(work, struct hci_dev,
 					    cmd_timer.work);
 
-	if (hdev->req_skb) {
-		u16 opcode = hci_skb_opcode(hdev->req_skb);
+	if (hdev->sent_cmd) {
+		u16 opcode = hci_skb_opcode(hdev->sent_cmd);
 
 		bt_dev_err(hdev, "command 0x%4.4x tx timeout", opcode);
 
@@ -1873,10 +1873,8 @@ void hci_free_adv_monitor(struct hci_dev *hdev, struct adv_monitor *monitor)
 	if (monitor->handle)
 		idr_remove(&hdev->adv_monitors_idr, monitor->handle);
 
-	if (monitor->state != ADV_MONITOR_STATE_NOT_REGISTERED) {
+	if (monitor->state != ADV_MONITOR_STATE_NOT_REGISTERED)
 		hdev->adv_monitors_cnt--;
-		mgmt_adv_monitor_removed(hdev, monitor->handle);
-	}
 
 	kfree(monitor);
 }
@@ -2762,7 +2760,6 @@ void hci_release_dev(struct hci_dev *hdev)
 
 	ida_simple_remove(&hci_index_ida, hdev->id);
 	kfree_skb(hdev->sent_cmd);
-	kfree_skb(hdev->req_skb);
 	kfree_skb(hdev->recv_event);
 	kfree(hdev);
 }
@@ -3092,33 +3089,21 @@ int __hci_cmd_send(struct hci_dev *hdev, u16 opcode, u32 plen,
 EXPORT_SYMBOL(__hci_cmd_send);
 
 /* Get data from the previously sent command */
-static void *hci_cmd_data(struct sk_buff *skb, __u16 opcode)
+void *hci_sent_cmd_data(struct hci_dev *hdev, __u16 opcode)
 {
 	struct hci_command_hdr *hdr;
 
-	if (!skb || skb->len < HCI_COMMAND_HDR_SIZE)
+	if (!hdev->sent_cmd)
 		return NULL;
 
-	hdr = (void *)skb->data;
+	hdr = (void *) hdev->sent_cmd->data;
 
 	if (hdr->opcode != cpu_to_le16(opcode))
 		return NULL;
 
-	return skb->data + HCI_COMMAND_HDR_SIZE;
-}
+	BT_DBG("%s opcode 0x%4.4x", hdev->name, opcode);
 
-/* Get data from the previously sent command */
-void *hci_sent_cmd_data(struct hci_dev *hdev, __u16 opcode)
-{
-	void *data;
-
-	/* Check if opcode matches last sent command */
-	data = hci_cmd_data(hdev->sent_cmd, opcode);
-	if (!data)
-		/* Check if opcode matches last request */
-		data = hci_cmd_data(hdev->req_skb, opcode);
-
-	return data;
+	return hdev->sent_cmd->data + HCI_COMMAND_HDR_SIZE;
 }
 
 /* Get data from last received event */
@@ -3415,23 +3400,18 @@ static void hci_link_tx_to(struct hci_dev *hdev, __u8 type)
 
 	bt_dev_err(hdev, "link tx timeout");
 
-	rcu_read_lock();
+	hci_dev_lock(hdev);
 
 	/* Kill stalled connections */
-	list_for_each_entry_rcu(c, &h->list, list) {
+	list_for_each_entry(c, &h->list, list) {
 		if (c->type == type && c->sent) {
 			bt_dev_err(hdev, "killing stalled connection %pMR",
 				   &c->dst);
-			/* hci_disconnect might sleep, so, we have to release
-			 * the RCU read lock before calling it.
-			 */
-			rcu_read_unlock();
 			hci_disconnect(c, HCI_ERROR_REMOTE_USER_TERM);
-			rcu_read_lock();
 		}
 	}
 
-	rcu_read_unlock();
+	hci_dev_unlock(hdev);
 }
 
 static struct hci_chan *hci_chan_sent(struct hci_dev *hdev, __u8 type,
@@ -3842,18 +3822,22 @@ static void hci_tx_work(struct work_struct *work)
 /* ACL data packet */
 static void hci_acldata_packet(struct hci_dev *hdev, struct sk_buff *skb)
 {
-	struct hci_acl_hdr *hdr = (void *) skb->data;
+	struct hci_acl_hdr *hdr;
 	struct hci_conn *conn;
 	__u16 handle, flags;
 
-	skb_pull(skb, HCI_ACL_HDR_SIZE);
+	hdr = skb_pull_data(skb, sizeof(*hdr));
+	if (!hdr) {
+		bt_dev_err(hdev, "ACL packet too small");
+		goto drop;
+	}
 
 	handle = __le16_to_cpu(hdr->handle);
 	flags  = hci_flags(handle);
 	handle = hci_handle(handle);
 
-	BT_DBG("%s len %d handle 0x%4.4x flags 0x%4.4x", hdev->name, skb->len,
-	       handle, flags);
+	bt_dev_dbg(hdev, "len %d handle 0x%4.4x flags 0x%4.4x", skb->len,
+		   handle, flags);
 
 	hdev->stat.acl_rx++;
 
@@ -3872,6 +3856,7 @@ static void hci_acldata_packet(struct hci_dev *hdev, struct sk_buff *skb)
 			   handle);
 	}
 
+drop:
 	kfree_skb(skb);
 }
 
@@ -4014,19 +3999,17 @@ void hci_req_cmd_complete(struct hci_dev *hdev, u16 opcode, u8 status,
 	if (!status && !hci_req_is_complete(hdev))
 		return;
 
-	skb = hdev->req_skb;
-
 	/* If this was the last command in a request the complete
-	 * callback would be found in hdev->req_skb instead of the
+	 * callback would be found in hdev->sent_cmd instead of the
 	 * command queue (hdev->cmd_q).
 	 */
-	if (skb && bt_cb(skb)->hci.req_flags & HCI_REQ_SKB) {
-		*req_complete_skb = bt_cb(skb)->hci.req_complete_skb;
+	if (bt_cb(hdev->sent_cmd)->hci.req_flags & HCI_REQ_SKB) {
+		*req_complete_skb = bt_cb(hdev->sent_cmd)->hci.req_complete_skb;
 		return;
 	}
 
-	if (skb && bt_cb(skb)->hci.req_complete) {
-		*req_complete = bt_cb(skb)->hci.req_complete;
+	if (bt_cb(hdev->sent_cmd)->hci.req_complete) {
+		*req_complete = bt_cb(hdev->sent_cmd)->hci.req_complete;
 		return;
 	}
 
@@ -4143,11 +4126,8 @@ static void hci_send_cmd_sync(struct hci_dev *hdev, struct sk_buff *skb)
 		return;
 	}
 
-	if (hci_req_status_pend(hdev) &&
-	    !hci_dev_test_and_set_flag(hdev, HCI_CMD_PENDING)) {
-		kfree_skb(hdev->req_skb);
-		hdev->req_skb = skb_clone(hdev->sent_cmd, GFP_KERNEL);
-	}
+	if (hci_req_status_pend(hdev))
+		hci_dev_set_flag(hdev, HCI_CMD_PENDING);
 
 	atomic_dec(&hdev->cmd_cnt);
 }

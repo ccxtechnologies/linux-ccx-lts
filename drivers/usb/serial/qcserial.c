@@ -185,6 +185,8 @@ static const struct usb_device_id id_table_combine[] = {
 	{DEVICE_SWI_SDX55(0x1199, 0x90e1)},	/* Sierra Wireless EM929x */
 	{DEVICE_SWI(0x1199, 0x90e2)},	/* Sierra Wireless EM929x QDL */
 	{DEVICE_SWI_SDX55(0x1199, 0x90e3)},	/* Sierra Wireless EM929x */
+	{DEVICE_SWI(0x1199, 0x90e4)},   /* Sierra Wireless EM86xx QDL*/
+	{DEVICE_SWI(0x1199, 0x90e5)},   /* Sierra Wireless EM86xx */
 	{DEVICE_SWI(0x413c, 0x81a2)},	/* Dell Wireless 5806 Gobi(TM) 4G LTE Mobile Broadband Card */
 	{DEVICE_SWI(0x413c, 0x81a3)},	/* Dell Wireless 5570 HSPA+ (42Mbps) Mobile Broadband Card */
 	{DEVICE_SWI(0x413c, 0x81a4)},	/* Dell Wireless 5570e HSPA+ (42Mbps) Mobile Broadband Card */
