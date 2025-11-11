@@ -1293,12 +1293,12 @@ static int dspi_init(struct fsl_dspi *dspi)
 	/* Set idle states for all chip select signals to high */
 	mcr = SPI_MCR_PCSIS(GENMASK(dspi->ctlr->max_native_cs - 1, 0));
 
-	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE)
+	if (dspi->devtype_data->trans_mode == DSPI_XSPI_MODE) {
 		mcr |= SPI_MCR_XSPI;
+		mcr |= SPI_MCR_HALT;
+	}
 	if (!spi_controller_is_slave(dspi->ctlr))
 		mcr |= SPI_MCR_MASTER;
-
-	mcr |= SPI_MCR_HALT;
 
 	regmap_write(dspi->regmap, SPI_MCR, mcr);
 	regmap_write(dspi->regmap, SPI_SR, SPI_SR_CLEAR);
