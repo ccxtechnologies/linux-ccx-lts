@@ -118,6 +118,9 @@
 #define DP83867_PHYCR_RESERVED_MASK		BIT(11)
 #define DP83867_PHYCR_FORCE_LINK_GOOD		BIT(10)
 #define DP83867_PHYCR_SGMII_ENABLE		BIT(11)
+#define DP83867_PHYCR_POWER_SAVE_MASK		GENMASK(9, 8)
+#define DP83867_PHYCR_POWER_SAVE_ACTIVE_SLEEP	BIT(9)
+#define DP83867_PHYCR_POWER_SAVE_NORMAL			0x00
 
 /* RGMIIDCTL bits */
 #define DP83867_RGMII_TX_CLK_DELAY_MAX		0xf
@@ -598,12 +601,61 @@ static int dp83867_set_downshift(struct phy_device *phydev, u8 cnt)
 			  val);
 }
 
+static int dp83867_get_edpd(struct phy_device *phydev, u16 *tx_interval)
+{
+	int val;
+
+	val = phy_read(phydev, MII_DP83867_PHYCTRL);
+	if (val < 0)
+		return val;
+
+	if (DP83867_PHYCR_POWER_SAVE_ACTIVE_SLEEP & val) {
+		/* default is 1.4 seconds */
+		*tx_interval = ETHTOOL_PHY_EDPD_DFLT_TX_MSECS;
+	} else {
+		*tx_interval = ETHTOOL_PHY_EDPD_DISABLE;
+	}
+
+	return 0;
+}
+
+static int dp83867_set_edpd(struct phy_device *phydev, u16 tx_interval)
+{
+	int val;
+	int ret;
+
+	val = phy_read(phydev, MII_DP83867_PHYCTRL);
+	if (val < 0)
+		return val;
+
+	val &= ~DP83867_PHYCR_POWER_SAVE_MASK;
+
+	if (tx_interval == ETHTOOL_PHY_EDPD_DISABLE) {
+		val |= DP83867_PHYCR_POWER_SAVE_NORMAL;
+		return phy_write(phydev, MII_DP83867_PHYCTRL, val);
+	}
+
+	switch (tx_interval) {
+	case 1400: /* 1.4 seconds */
+		fallthrough;
+	case ETHTOOL_PHY_EDPD_DFLT_TX_MSECS:
+		val |= DP83867_PHYCR_POWER_SAVE_ACTIVE_SLEEP;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return phy_write(phydev, MII_DP83867_PHYCTRL, val);
+}
+
 static int dp83867_get_tunable(struct phy_device *phydev,
 			       struct ethtool_tunable *tuna, void *data)
 {
 	switch (tuna->id) {
 	case ETHTOOL_PHY_DOWNSHIFT:
 		return dp83867_get_downshift(phydev, data);
+	case ETHTOOL_PHY_EDPD:
+		return dp83867_get_edpd(phydev, data);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -615,6 +667,8 @@ static int dp83867_set_tunable(struct phy_device *phydev,
 	switch (tuna->id) {
 	case ETHTOOL_PHY_DOWNSHIFT:
 		return dp83867_set_downshift(phydev, *(const u8 *)data);
+	case ETHTOOL_PHY_EDPD:
+		return dp83867_set_edpd(phydev, *(const u16 *)data);
 	default:
 		return -EOPNOTSUPP;
 	}
