@@ -248,11 +248,15 @@ static int rv3028_update_cfg(struct rv3028_data *rv3028, unsigned int reg,
 	if (ret)
 		return ret;
 
+	usleep_range(10000, 20000);
+
 	ret = regmap_update_bits(rv3028->regmap, reg, mask, val);
 	if (ret) {
 		rv3028_exit_eerd(rv3028, eerd);
 		return ret;
 	}
+
+	usleep_range(10000, 20000);
 
 	return rv3028_update_eeprom(rv3028, eerd);
 }
@@ -809,9 +813,13 @@ static int rv3028_probe(struct i2c_client *client)
 			if (ohms == rv3028_trickle_resistors[i])
 				break;
 
+		/* when enabling the trickle charger also enable the BSM mode, doesn't
+		 * make sense to have one without the other */
 		if (i < ARRAY_SIZE(rv3028_trickle_resistors)) {
 			ret = rv3028_update_cfg(rv3028, RV3028_BACKUP, RV3028_BACKUP_TCE |
-						 RV3028_BACKUP_TCR_MASK, RV3028_BACKUP_TCE | i);
+						 RV3028_BACKUP_TCR_MASK | RV3028_BACKUP_BSM,
+						 RV3028_BACKUP_TCE | i |
+						 FIELD_PREP(RV3028_BACKUP_BSM, RV3028_BACKUP_BSM_DSM));
 			if (ret)
 				return ret;
 		} else {
