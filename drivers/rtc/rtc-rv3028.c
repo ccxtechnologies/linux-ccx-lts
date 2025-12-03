@@ -586,7 +586,7 @@ static int rv3028_param_set(struct device *dev, struct rtc_param *param)
 static int rv3028_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
 {
 	struct rv3028_data *rv3028 = dev_get_drvdata(dev);
-	int status, ret = 0;
+	int status, touser = 0, ret = 0;
 
 	switch (cmd) {
 	case RTC_VL_READ:
@@ -594,8 +594,17 @@ static int rv3028_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
 		if (ret < 0)
 			return ret;
 
-		status = status & RV3028_STATUS_PORF ? RTC_VL_DATA_INVALID : 0;
-		return put_user(status, (unsigned int __user *)arg);
+		if (status & RV3028_STATUS_PORF)
+			touser |= RTC_VL_DATA_INVALID;
+
+		if (status & RV3028_STATUS_EVF)
+			touser |= RTC_VL_BACKUP_SWITCH;
+
+		return put_user(touser, (unsigned int __user *)arg);
+
+	case RTC_VL_CLR:
+		return regmap_update_bits(rv3028->regmap, RV3028_STATUS,
+				RV3028_STATUS_PORF | RV3028_STATUS_EVF, 0);
 
 	default:
 		return -ENOIOCTLCMD;
