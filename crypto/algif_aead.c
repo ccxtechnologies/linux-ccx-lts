@@ -78,8 +78,8 @@ static int crypto_aead_copy_sgl(struct crypto_sync_skcipher *null_tfm,
 	SYNC_SKCIPHER_REQUEST_ON_STACK(skreq, null_tfm);
 
 	skcipher_request_set_sync_tfm(skreq, null_tfm);
-	skcipher_request_set_callback(skreq, CRYPTO_TFM_REQ_MAY_SLEEP,
-				      NULL, NULL);
+	skcipher_request_set_callback(skreq, CRYPTO_TFM_REQ_MAY_SLEEP, NULL,
+				      NULL);
 	skcipher_request_set_crypt(skreq, src, dst, len, NULL);
 
 	return crypto_skcipher_encrypt(skreq);
@@ -94,17 +94,17 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 	struct alg_sock *pask = alg_sk(psk);
 	struct af_alg_ctx *ctx = ask->private;
 	struct aead_tfm *aeadc = pask->private;
-	struct crypto_aead *tfm = aeadc->aead;
 	struct crypto_sync_skcipher *null_tfm = aeadc->null_tfm;
 	unsigned int i, as = crypto_aead_authsize(tfm);
+	struct crypto_aead *tfm = pask->private;
+	unsigned int as = crypto_aead_authsize(tfm);
 	struct af_alg_async_req *areq;
-	struct af_alg_tsgl *tsgl, *tmp;
 	struct scatterlist *rsgl_src, *tsgl_src = NULL;
 	int err = 0;
-	size_t used = 0;		/* [in]  TX bufs to be en/decrypted */
-	size_t outlen = 0;		/* [out] RX bufs produced by kernel */
-	size_t usedpages = 0;		/* [in]  RX bufs to be used from user */
-	size_t processed = 0;		/* [in]  TX bufs to be consumed */
+	size_t used = 0; /* [in]  TX bufs to be en/decrypted */
+	size_t outlen = 0; /* [out] RX bufs produced by kernel */
+	size_t usedpages = 0; /* [in]  RX bufs to be used from user */
+	size_t processed = 0; /* [in]  TX bufs to be consumed */
 
 	if (!ctx->init || ctx->more) {
 		err = af_alg_wait_for_data(sk, flags, 0);
@@ -151,7 +151,7 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 
 	/* Allocate cipher request for current operation. */
 	areq = af_alg_alloc_areq(sk, sizeof(struct af_alg_async_req) +
-				     crypto_aead_reqsize(tfm));
+					     crypto_aead_reqsize(tfm));
 	if (IS_ERR(areq))
 		return PTR_ERR(areq);
 
@@ -178,23 +178,24 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 		outlen -= less;
 	}
 
+	/*
+	 * Create a per request TX SGL for this request which tracks the
+	 * SG entries from the global TX SGL.
+	 */
 	processed = used + ctx->aead_assoclen;
-	list_for_each_entry_safe(tsgl, tmp, &ctx->tsgl_list, list) {
-		for (i = 0; i < tsgl->cur; i++) {
-			struct scatterlist *process_sg = tsgl->sg + i;
-
-			if (!(process_sg->length) || !sg_page(process_sg))
-				continue;
-			tsgl_src = process_sg;
-			break;
-		}
-		if (tsgl_src)
-			break;
-	}
-	if (processed && !tsgl_src) {
-		err = -EFAULT;
+	areq->tsgl_entries = af_alg_count_tsgl(sk, processed);
+	if (!areq->tsgl_entries)
+		areq->tsgl_entries = 1;
+	areq->tsgl = sock_kmalloc(
+		sk, array_size(sizeof(*areq->tsgl), areq->tsgl_entries),
+		GFP_KERNEL);
+	if (!areq->tsgl) {
+		err = -ENOMEM;
 		goto free;
 	}
+	sg_init_table(areq->tsgl, areq->tsgl_entries);
+	af_alg_pull_tsgl(sk, processed, areq->tsgl);
+	tsgl_src = areq->tsgl;
 
 	/*
 	 * Copy of AAD from source to destination
@@ -203,81 +204,15 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 	 * when user space uses an in-place cipher operation, the kernel
 	 * will copy the data as it does not see whether such in-place operation
 	 * is initiated.
-	 *
-	 * To ensure efficiency, the following implementation ensure that the
-	 * ciphers are invoked to perform a crypto operation in-place. This
-	 * is achieved by memory management specified as follows.
 	 */
 
 	/* Use the RX SGL as source (and destination) for crypto op. */
 	rsgl_src = areq->first_rsgl.sgl.sg;
 
-	if (ctx->enc) {
-		/*
-		 * Encryption operation - The in-place cipher operation is
-		 * achieved by the following operation:
-		 *
-		 * TX SGL: AAD || PT
-		 *	    |	   |
-		 *	    | copy |
-		 *	    v	   v
-		 * RX SGL: AAD || PT || Tag
-		 */
-		err = crypto_aead_copy_sgl(null_tfm, tsgl_src,
-					   areq->first_rsgl.sgl.sg, processed);
-		if (err)
-			goto free;
-		af_alg_pull_tsgl(sk, processed, NULL, 0);
-	} else {
-		/*
-		 * Decryption operation - To achieve an in-place cipher
-		 * operation, the following  SGL structure is used:
-		 *
-		 * TX SGL: AAD || CT || Tag
-		 *	    |	   |	 ^
-		 *	    | copy |	 | Create SGL link.
-		 *	    v	   v	 |
-		 * RX SGL: AAD || CT ----+
-		 */
-
-		 /* Copy AAD || CT to RX SGL buffer for in-place operation. */
-		err = crypto_aead_copy_sgl(null_tfm, tsgl_src,
-					   areq->first_rsgl.sgl.sg, outlen);
-		if (err)
-			goto free;
-
-		/* Create TX SGL for tag and chain it to RX SGL. */
-		areq->tsgl_entries = af_alg_count_tsgl(sk, processed,
-						       processed - as);
-		if (!areq->tsgl_entries)
-			areq->tsgl_entries = 1;
-		areq->tsgl = sock_kmalloc(sk, array_size(sizeof(*areq->tsgl),
-							 areq->tsgl_entries),
-					  GFP_KERNEL);
-		if (!areq->tsgl) {
-			err = -ENOMEM;
-			goto free;
-		}
-		sg_init_table(areq->tsgl, areq->tsgl_entries);
-
-		/* Release TX SGL, except for tag data and reassign tag data. */
-		af_alg_pull_tsgl(sk, processed, areq->tsgl, processed - as);
-
-		/* chain the areq TX SGL holding the tag with RX SGL */
-		if (usedpages) {
-			/* RX SGL present */
-			struct af_alg_sgl *sgl_prev = &areq->last_rsgl->sgl;
-
-			sg_unmark_end(sgl_prev->sg + sgl_prev->npages - 1);
-			sg_chain(sgl_prev->sg, sgl_prev->npages + 1,
-				 areq->tsgl);
-		} else
-			/* no RX SGL present (e.g. authentication only) */
-			rsgl_src = areq->tsgl;
-	}
+	memcpy_sglist(rsgl_src, tsgl_src, ctx->aead_assoclen);
 
 	/* Initialize the crypto operation */
-	aead_request_set_crypt(&areq->cra_u.aead_req, rsgl_src,
+	aead_request_set_crypt(&areq->cra_u.aead_req, tsgl_src,
 			       areq->first_rsgl.sgl.sg, used, ctx->iv);
 	aead_request_set_ad(&areq->cra_u.aead_req, ctx->aead_assoclen);
 	aead_request_set_tfm(&areq->cra_u.aead_req, tfm);
@@ -305,14 +240,13 @@ static int _aead_recvmsg(struct socket *sock, struct msghdr *msg,
 		/* Synchronous operation */
 		aead_request_set_callback(&areq->cra_u.aead_req,
 					  CRYPTO_TFM_REQ_MAY_SLEEP |
-					  CRYPTO_TFM_REQ_MAY_BACKLOG,
+						  CRYPTO_TFM_REQ_MAY_BACKLOG,
 					  crypto_req_done, &ctx->wait);
-		err = crypto_wait_req(ctx->enc ?
-				crypto_aead_encrypt(&areq->cra_u.aead_req) :
-				crypto_aead_decrypt(&areq->cra_u.aead_req),
-				&ctx->wait);
+		err = crypto_wait_req(
+			ctx->enc ? crypto_aead_encrypt(&areq->cra_u.aead_req) :
+				   crypto_aead_decrypt(&areq->cra_u.aead_req),
+			&ctx->wait);
 	}
-
 
 free:
 	af_alg_free_resources(areq);
@@ -320,8 +254,8 @@ free:
 	return err ? err : outlen;
 }
 
-static int aead_recvmsg(struct socket *sock, struct msghdr *msg,
-			size_t ignored, int flags)
+static int aead_recvmsg(struct socket *sock, struct msghdr *msg, size_t ignored,
+			int flags)
 {
 	struct sock *sk = sock->sk;
 	int ret = 0;
@@ -354,23 +288,23 @@ out:
 }
 
 static struct proto_ops algif_aead_ops = {
-	.family		=	PF_ALG,
+	.family = PF_ALG,
 
-	.connect	=	sock_no_connect,
-	.socketpair	=	sock_no_socketpair,
-	.getname	=	sock_no_getname,
-	.ioctl		=	sock_no_ioctl,
-	.listen		=	sock_no_listen,
-	.shutdown	=	sock_no_shutdown,
-	.mmap		=	sock_no_mmap,
-	.bind		=	sock_no_bind,
-	.accept		=	sock_no_accept,
+	.connect = sock_no_connect,
+	.socketpair = sock_no_socketpair,
+	.getname = sock_no_getname,
+	.ioctl = sock_no_ioctl,
+	.listen = sock_no_listen,
+	.shutdown = sock_no_shutdown,
+	.mmap = sock_no_mmap,
+	.bind = sock_no_bind,
+	.accept = sock_no_accept,
 
-	.release	=	af_alg_release,
-	.sendmsg	=	aead_sendmsg,
-	.sendpage	=	af_alg_sendpage,
-	.recvmsg	=	aead_recvmsg,
-	.poll		=	af_alg_poll,
+	.release = af_alg_release,
+	.sendmsg = aead_sendmsg,
+	.sendpage = af_alg_sendpage,
+	.recvmsg = aead_recvmsg,
+	.poll = af_alg_poll,
 };
 
 static int aead_check_key(struct socket *sock)
@@ -409,7 +343,7 @@ unlock_child:
 }
 
 static int aead_sendmsg_nokey(struct socket *sock, struct msghdr *msg,
-				  size_t size)
+			      size_t size)
 {
 	int err;
 
@@ -421,7 +355,7 @@ static int aead_sendmsg_nokey(struct socket *sock, struct msghdr *msg,
 }
 
 static ssize_t aead_sendpage_nokey(struct socket *sock, struct page *page,
-				       int offset, size_t size, int flags)
+				   int offset, size_t size, int flags)
 {
 	int err;
 
@@ -433,7 +367,7 @@ static ssize_t aead_sendpage_nokey(struct socket *sock, struct page *page,
 }
 
 static int aead_recvmsg_nokey(struct socket *sock, struct msghdr *msg,
-				  size_t ignored, int flags)
+			      size_t ignored, int flags)
 {
 	int err;
 
@@ -445,23 +379,23 @@ static int aead_recvmsg_nokey(struct socket *sock, struct msghdr *msg,
 }
 
 static struct proto_ops algif_aead_ops_nokey = {
-	.family		=	PF_ALG,
+	.family = PF_ALG,
 
-	.connect	=	sock_no_connect,
-	.socketpair	=	sock_no_socketpair,
-	.getname	=	sock_no_getname,
-	.ioctl		=	sock_no_ioctl,
-	.listen		=	sock_no_listen,
-	.shutdown	=	sock_no_shutdown,
-	.mmap		=	sock_no_mmap,
-	.bind		=	sock_no_bind,
-	.accept		=	sock_no_accept,
+	.connect = sock_no_connect,
+	.socketpair = sock_no_socketpair,
+	.getname = sock_no_getname,
+	.ioctl = sock_no_ioctl,
+	.listen = sock_no_listen,
+	.shutdown = sock_no_shutdown,
+	.mmap = sock_no_mmap,
+	.bind = sock_no_bind,
+	.accept = sock_no_accept,
 
-	.release	=	af_alg_release,
-	.sendmsg	=	aead_sendmsg_nokey,
-	.sendpage	=	aead_sendpage_nokey,
-	.recvmsg	=	aead_recvmsg_nokey,
-	.poll		=	af_alg_poll,
+	.release = af_alg_release,
+	.sendmsg = aead_sendmsg_nokey,
+	.sendpage = aead_sendpage_nokey,
+	.recvmsg = aead_recvmsg_nokey,
+	.poll = af_alg_poll,
 };
 
 static void *aead_bind(const char *name, u32 type, u32 mask)
@@ -526,7 +460,7 @@ static void aead_sock_destruct(struct sock *sk)
 	struct crypto_aead *tfm = aeadc->aead;
 	unsigned int ivlen = crypto_aead_ivsize(tfm);
 
-	af_alg_pull_tsgl(sk, ctx->used, NULL, 0);
+	af_alg_pull_tsgl(sk, ctx->used, NULL);
 	sock_kzfree_s(sk, ctx->iv, ivlen);
 	sock_kfree_s(sk, ctx, ctx->len);
 	af_alg_release_parent(sk);
@@ -575,16 +509,16 @@ static int aead_accept_parent(void *private, struct sock *sk)
 }
 
 static const struct af_alg_type algif_type_aead = {
-	.bind		=	aead_bind,
-	.release	=	aead_release,
-	.setkey		=	aead_setkey,
-	.setauthsize	=	aead_setauthsize,
-	.accept		=	aead_accept_parent,
-	.accept_nokey	=	aead_accept_parent_nokey,
-	.ops		=	&algif_aead_ops,
-	.ops_nokey	=	&algif_aead_ops_nokey,
-	.name		=	"aead",
-	.owner		=	THIS_MODULE
+	.bind = aead_bind,
+	.release = aead_release,
+	.setkey = aead_setkey,
+	.setauthsize = aead_setauthsize,
+	.accept = aead_accept_parent,
+	.accept_nokey = aead_accept_parent_nokey,
+	.ops = &algif_aead_ops,
+	.ops_nokey = &algif_aead_ops_nokey,
+	.name = "aead",
+	.owner = THIS_MODULE
 };
 
 static int __init algif_aead_init(void)
